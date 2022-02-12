@@ -48,20 +48,26 @@ public class MessageOutputStreamWrapper {
   public static class JsonOutputStreamWrapper implements MessageOutputStream {
     private final OutputStream stream;
     private final JsonFormat.Printer printer = JsonFormat.printer().includingDefaultValueFields();
+    private int numMessagesWritten;
 
-    public JsonOutputStreamWrapper(OutputStream stream) {
+    public JsonOutputStreamWrapper(OutputStream stream) throws IOException {
       Preconditions.checkNotNull(stream);
       this.stream = stream;
+      stream.write('[');
     }
 
     @Override
     public void write(Message m) throws IOException {
       Preconditions.checkNotNull(m);
+      if (numMessagesWritten++ > 0) {
+        stream.write(',');
+      }
       stream.write(printer.print(m).getBytes(StandardCharsets.UTF_8));
     }
 
     @Override
     public void close() throws IOException {
+      stream.write(']');
       stream.close();
     }
   }
