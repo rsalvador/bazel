@@ -794,7 +794,7 @@ public class ExecutionTool {
     private final PrintWriter log;
 
     private ExplanationHandler(OutputStream log, String optionsDescription) {
-      this.log = new PrintWriter(new OutputStreamWriter(log, StandardCharsets.UTF_8));
+      this.log = new PrintWriter(new OutputStreamWriter(log, StandardCharsets.UTF_8), true);
       this.log.println("Build options: " + optionsDescription);
     }
 
