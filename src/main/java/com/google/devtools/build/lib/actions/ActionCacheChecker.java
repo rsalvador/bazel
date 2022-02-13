@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -580,8 +581,44 @@ public class ActionCacheChecker {
     reportRebuild(handler, action, "unconditional execution is requested");
   }
 
-  private static void reportChanged(@Nullable EventHandler handler, Action action) {
-    reportRebuild(handler, action, "One of the files has changed");
+  private void reportChanged(@Nullable EventHandler handler, Action action) {
+    String message = cacheConfig.verboseExplanations()? "some files changed" + explainInputChanged(action)
+            : "some input changed";
+    reportRebuild(handler, action, message);
+  }
+
+  private static String explainInputChanged(Action action) {
+    StringBuilder explanation = new StringBuilder(": ");
+    try {
+      long newestOutputTime = 0;
+      String newestOutput = null;
+      for (Artifact output : action.getOutputs()) {
+        Path path = output.getPath();
+        if (path.exists()) {
+          long modTime = path.getLastModifiedTime();
+          if (newestOutputTime < modTime) {
+            newestOutputTime = modTime;
+            newestOutput = output.prettyPrint();
+          }
+        }
+      }
+      if (newestOutput != null) {
+        explanation.append("inputs newer than newest output:");
+        for (Artifact input : action.getInputs().toList()) {
+          Path path = input.getPath();
+          if (path.exists()) {
+            if (path.getLastModifiedTime() > newestOutputTime) {
+              explanation.append(' ' + input.prettyPrint());
+            }
+          }
+        }
+      } else {
+        explanation.append("outputs deleted?");
+      }
+    } catch (IOException x) {
+      explanation.append("error: " + x);
+    }
+    return explanation.toString();
   }
 
   private static void reportChangedDeps(@Nullable EventHandler handler, Action action) {
