@@ -27,7 +27,11 @@ import com.google.devtools.build.lib.exec.ExecutorLifecycleListener;
 import com.google.devtools.build.lib.exec.ModuleActionContextRegistry;
 import com.google.devtools.build.lib.exec.SpawnCache;
 import com.google.devtools.build.lib.exec.SpawnStrategyRegistry;
+import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.remote.common.RemoteExecutionClient;
+import com.google.devtools.build.lib.remote.common.RemotePathResolver;
+import com.google.devtools.build.lib.remote.common.RemotePathResolver.DefaultRemotePathResolver;
+import com.google.devtools.build.lib.remote.common.RemotePathResolver.SiblingRepositoryLayoutResolver;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
@@ -38,46 +42,104 @@ import javax.annotation.Nullable;
 final class RemoteActionContextProvider implements ExecutorLifecycleListener {
 
   private final CommandEnvironment env;
-  private final RemoteCache cache;
+  @Nullable private final RemoteCache cache;
   @Nullable private final RemoteExecutionClient executor;
   @Nullable private final ListeningScheduledExecutorService retryScheduler;
   private final DigestUtil digestUtil;
   @Nullable private final Path logDir;
   private ImmutableSet<ActionInput> filesToDownload = ImmutableSet.of();
+  private RemoteExecutionService remoteExecutionService;
 
   private RemoteActionContextProvider(
       CommandEnvironment env,
-      RemoteCache cache,
+      @Nullable RemoteCache cache,
       @Nullable RemoteExecutionClient executor,
       @Nullable ListeningScheduledExecutorService retryScheduler,
       DigestUtil digestUtil,
       @Nullable Path logDir) {
     this.env = Preconditions.checkNotNull(env, "env");
-    this.cache = Preconditions.checkNotNull(cache, "cache");
+    this.cache = cache;
     this.executor = executor;
     this.retryScheduler = retryScheduler;
     this.digestUtil = digestUtil;
     this.logDir = logDir;
   }
 
+  public static RemoteActionContextProvider createForPlaceholder(
+      CommandEnvironment env,
+      ListeningScheduledExecutorService retryScheduler,
+      DigestUtil digestUtil) {
+    return new RemoteActionContextProvider(
+        env, /*cache=*/ null, /*executor=*/ null, retryScheduler, digestUtil, /*logDir=*/ null);
+  }
+
+  private static void maybeSetCaptureCorruptedOutputsDir(
+      RemoteOptions remoteOptions, RemoteCache remoteCache, Path workingDirectory) {
+    if (remoteOptions.remoteCaptureCorruptedOutputs != null
+        && !remoteOptions.remoteCaptureCorruptedOutputs.isEmpty()) {
+      remoteCache.setCaptureCorruptedOutputsDir(
+          workingDirectory.getRelative(remoteOptions.remoteCaptureCorruptedOutputs));
+    }
+  }
+
   public static RemoteActionContextProvider createForRemoteCaching(
       CommandEnvironment env,
+      RemoteOptions options,
       RemoteCache cache,
       ListeningScheduledExecutorService retryScheduler,
       DigestUtil digestUtil) {
+    maybeSetCaptureCorruptedOutputsDir(options, cache, env.getWorkingDirectory());
+
     return new RemoteActionContextProvider(
         env, cache, /*executor=*/ null, retryScheduler, digestUtil, /*logDir=*/ null);
   }
 
   public static RemoteActionContextProvider createForRemoteExecution(
       CommandEnvironment env,
+      RemoteOptions options,
       RemoteExecutionCache cache,
       RemoteExecutionClient executor,
       ListeningScheduledExecutorService retryScheduler,
       DigestUtil digestUtil,
       Path logDir) {
+    maybeSetCaptureCorruptedOutputsDir(options, cache, env.getWorkingDirectory());
+
     return new RemoteActionContextProvider(
         env, cache, executor, retryScheduler, digestUtil, logDir);
+  }
+
+  RemotePathResolver createRemotePathResolver() {
+    Path execRoot = env.getExecRoot();
+    BuildLanguageOptions buildLanguageOptions =
+        env.getOptions().getOptions(BuildLanguageOptions.class);
+    RemotePathResolver remotePathResolver;
+    if (buildLanguageOptions != null && buildLanguageOptions.experimentalSiblingRepositoryLayout) {
+      RemoteOptions remoteOptions = checkNotNull(env.getOptions().getOptions(RemoteOptions.class));
+      remotePathResolver =
+          new SiblingRepositoryLayoutResolver(
+              execRoot, remoteOptions.incompatibleRemoteOutputPathsRelativeToInputRoot);
+    } else {
+      remotePathResolver = new DefaultRemotePathResolver(execRoot);
+    }
+    return remotePathResolver;
+  }
+
+  RemoteExecutionService getRemoteExecutionService() {
+    if (remoteExecutionService == null) {
+      remoteExecutionService =
+          new RemoteExecutionService(
+              env.getExecRoot(),
+              createRemotePathResolver(),
+              env.getBuildRequestId(),
+              env.getCommandId().toString(),
+              digestUtil,
+              checkNotNull(env.getOptions().getOptions(RemoteOptions.class)),
+              cache,
+              executor,
+              filesToDownload);
+    }
+
+    return remoteExecutionService;
   }
 
   /**
@@ -86,12 +148,7 @@ final class RemoteActionContextProvider implements ExecutorLifecycleListener {
    *
    * @param registryBuilder builder with which to register the strategy
    */
-  public void registerRemoteSpawnStrategyIfApplicable(
-      SpawnStrategyRegistry.Builder registryBuilder) {
-    if (executor == null) {
-      return; // Can't use a spawn strategy without executor.
-    }
-
+  public void registerRemoteSpawnStrategy(SpawnStrategyRegistry.Builder registryBuilder) {
     boolean verboseFailures =
         checkNotNull(env.getOptions().getOptions(ExecutionOptions.class)).verboseFailures;
     RemoteSpawnRunner spawnRunner =
@@ -101,14 +158,9 @@ final class RemoteActionContextProvider implements ExecutorLifecycleListener {
             env.getOptions().getOptions(ExecutionOptions.class),
             verboseFailures,
             env.getReporter(),
-            env.getBuildRequestId(),
-            env.getCommandId().toString(),
-            (RemoteExecutionCache) cache,
-            executor,
             retryScheduler,
-            digestUtil,
             logDir,
-            filesToDownload);
+            getRemoteExecutionService());
     registryBuilder.registerStrategy(
         new RemoteSpawnStrategy(env.getExecRoot(), spawnRunner, verboseFailures), "remote");
   }
@@ -124,18 +176,18 @@ final class RemoteActionContextProvider implements ExecutorLifecycleListener {
             env.getExecRoot(),
             checkNotNull(env.getOptions().getOptions(RemoteOptions.class)),
             checkNotNull(env.getOptions().getOptions(ExecutionOptions.class)).verboseFailures,
-            cache,
-            env.getBuildRequestId(),
-            env.getCommandId().toString(),
             env.getReporter(),
-            digestUtil,
-            filesToDownload);
+            getRemoteExecutionService());
     registryBuilder.register(SpawnCache.class, spawnCache, "remote-cache");
   }
 
   /** Returns the remote cache. */
   RemoteCache getRemoteCache() {
     return cache;
+  }
+
+  RemoteExecutionClient getRemoteExecutionClient() {
+    return executor;
   }
 
   void setFilesToDownload(ImmutableSet<ActionInput> topLevelOutputs) {
@@ -151,7 +203,9 @@ final class RemoteActionContextProvider implements ExecutorLifecycleListener {
 
   @Override
   public void executionPhaseEnding() {
-    cache.close();
+    if (cache != null) {
+      cache.close();
+    }
     if (executor != null) {
       executor.close();
     }

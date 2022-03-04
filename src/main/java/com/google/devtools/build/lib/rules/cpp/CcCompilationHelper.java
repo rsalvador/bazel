@@ -444,7 +444,9 @@ public final class CcCompilationHelper {
   }
 
   private CcCompilationHelper addPrivateHeader(Artifact privateHeader, Label label) {
-    boolean isHeader = CppFileTypes.CPP_HEADER.matches(privateHeader.getExecPath());
+    boolean isHeader =
+        CppFileTypes.CPP_HEADER.matches(privateHeader.getExecPath())
+            || privateHeader.isTreeArtifact();
     boolean isTextualInclude =
         CppFileTypes.CPP_TEXTUAL_INCLUDE.matches(privateHeader.getExecPath());
     Preconditions.checkState(isHeader || isTextualInclude);
@@ -949,9 +951,9 @@ public final class CcCompilationHelper {
           virtualToOriginalHeaders.add(
               Pair.of(virtualHeader.getExecPathString(), originalHeader.getExecPathString()));
         }
-      } else {
-        moduleHeadersBuilder.add(originalHeader);
       }
+
+      moduleHeadersBuilder.add(originalHeader);
     }
 
     ImmutableList<Artifact> moduleMapHeaders = moduleHeadersBuilder.build();

@@ -34,7 +34,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.BaseRuleClasses;
-import com.google.devtools.build.lib.analysis.ExecGroupCollection;
 import com.google.devtools.build.lib.analysis.RuleDefinitionContext;
 import com.google.devtools.build.lib.analysis.TemplateVariableInfo;
 import com.google.devtools.build.lib.analysis.config.ConfigAwareRuleClassBuilder;
@@ -383,7 +382,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi<Arti
           Dict.cast(execGroups, String.class, ExecGroup.class, "exec_group");
       for (String group : execGroupDict.keySet()) {
         // TODO(b/151742236): document this in the param documentation.
-        if (!ExecGroupCollection.isValidGroupName(group)) {
+        if (!StarlarkExecGroupCollection.isValidGroupName(group)) {
           throw Starlark.errorf("Exec group name '%s' is not a valid name.", group);
         }
       }
@@ -522,6 +521,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi<Arti
       StarlarkFunction implementation,
       Sequence<?> attributeAspects,
       Object attrs,
+      Sequence<?> requiredProvidersArg,
       Sequence<?> requiredAspectProvidersArg,
       Sequence<?> providesArg,
       Sequence<?> fragments,
@@ -611,6 +611,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi<Arti
         implementation,
         attrAspects.build(),
         attributes.build(),
+        StarlarkAttrModule.buildProviderPredicate(requiredProvidersArg, "required_providers"),
         StarlarkAttrModule.buildProviderPredicate(
             requiredAspectProvidersArg, "required_aspect_providers"),
         StarlarkAttrModule.getStarlarkProviderIdentifiers(providesArg),
@@ -934,7 +935,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi<Arti
         throw Starlark.errorf(
             "An exec group cannot set copy_from_rule=True and declare toolchains or constraints.");
       }
-      return ExecGroup.COPY_FROM_RULE_EXEC_GROUP;
+      return ExecGroup.copyFromDefault();
     }
 
     ImmutableSet<Label> toolchainTypes = ImmutableSet.copyOf(parseToolchains(toolchains, thread));

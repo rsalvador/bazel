@@ -46,8 +46,9 @@ import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.ConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.DependencyKind;
+import com.google.devtools.build.lib.analysis.ExecGroupCollection;
+import com.google.devtools.build.lib.analysis.ExecGroupCollection.InvalidExecGroupException;
 import com.google.devtools.build.lib.analysis.ResolvedToolchainContext;
-import com.google.devtools.build.lib.analysis.RuleContext.InvalidExecGroupException;
 import com.google.devtools.build.lib.analysis.ToolchainCollection;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
 import com.google.devtools.build.lib.analysis.ViewCreationFailedException;
@@ -55,7 +56,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollection;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.BuildOptions.OptionsDiff;
-import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider;
+import com.google.devtools.build.lib.analysis.config.ConfigConditions;
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
 import com.google.devtools.build.lib.analysis.config.FragmentClassSet;
 import com.google.devtools.build.lib.bugreport.BugReport;
@@ -927,8 +928,9 @@ public final class SkyframeBuildView {
       CachingAnalysisEnvironment analysisEnvironment,
       ConfiguredTargetKey configuredTargetKey,
       OrderedSetMultimap<DependencyKind, ConfiguredTargetAndData> prerequisiteMap,
-      ImmutableMap<Label, ConfigMatchingProvider> configConditions,
-      @Nullable ToolchainCollection<ResolvedToolchainContext> toolchainContexts)
+      ConfigConditions configConditions,
+      @Nullable ToolchainCollection<ResolvedToolchainContext> toolchainContexts,
+      ExecGroupCollection.Builder execGroupCollectionBuilder)
       throws InterruptedException, ActionConflictException, InvalidExecGroupException {
     Preconditions.checkState(
         enableAnalysis, "Already in execution phase %s %s", target, configuration);
@@ -944,7 +946,8 @@ public final class SkyframeBuildView {
         configuredTargetKey,
         prerequisiteMap,
         configConditions,
-        toolchainContexts);
+        toolchainContexts,
+        execGroupCollectionBuilder);
   }
 
   /**

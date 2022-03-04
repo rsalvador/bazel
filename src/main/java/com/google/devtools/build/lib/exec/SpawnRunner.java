@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.exec;
 
 import com.google.devtools.build.lib.actions.ActionContext;
+import com.google.devtools.build.lib.actions.ActionExecutionMetadata;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
 import com.google.devtools.build.lib.actions.ArtifactPathResolver;
@@ -24,6 +25,7 @@ import com.google.devtools.build.lib.actions.MetadataProvider;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.cache.MetadataInjector;
+import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -103,25 +105,9 @@ public interface SpawnRunner {
    * <p>{@link SpawnRunner} implementations should post a progress status before any potentially
    * long-running operation.
    */
-  enum ProgressStatus {
-    /** Spawn is waiting for local or remote resources to become available. */
-    SCHEDULING,
-
-    /** The {@link SpawnRunner} is looking for a cache hit. */
-    CHECKING_CACHE,
-
-    /**
-     * Resources are acquired, and there was probably no cache hit. This MUST be posted before
-     * attempting to execute the subprocess.
-     *
-     * <p>Caching {@link SpawnRunner} implementations should only post this after a failed cache
-     * lookup, but may post this if cache lookup and execution happen within the same step, e.g. as
-     * part of a single RPC call with no mechanism to report cache misses.
-     */
-    EXECUTING,
-
-    /** Downloading outputs from a remote machine. */
-    DOWNLOADING
+  interface ProgressStatus {
+    /** Post this progress event to the given {@link ExtendedEventHandler}. */
+    void postTo(ExtendedEventHandler eventHandler, ActionExecutionMetadata action);
   }
 
   /**
@@ -198,10 +184,22 @@ public interface SpawnRunner {
     /** The files to which to write stdout and stderr. */
     FileOutErr getFileOutErr();
 
-    SortedMap<PathFragment, ActionInput> getInputMapping() throws IOException;
+    /**
+     * Returns a sorted map from input paths to action inputs.
+     *
+     * <p>Resolves cases where a single input of the {@link Spawn} gives rise to multiple files in
+     * the input tree, for example, tree artifacts, runfiles trees and {@code Fileset} input
+     * manifests.
+     *
+     * <p>{@code baseDirectory} is prepended to every path in the input key. This is useful if the
+     * mapping is used in a context where the directory relative to which the keys are interpreted
+     * is not the same as the execroot.
+     */
+    SortedMap<PathFragment, ActionInput> getInputMapping(PathFragment baseDirectory)
+        throws IOException;
 
     /** Reports a progress update to the Spawn strategy. */
-    void report(ProgressStatus state, String name);
+    void report(ProgressStatus progress);
 
     /**
      * Returns a {@link MetadataInjector} that allows a caller to inject metadata about spawn
@@ -256,6 +254,11 @@ public interface SpawnRunner {
 
   /** Returns whether this SpawnRunner supports executing the given Spawn. */
   boolean canExec(Spawn spawn);
+
+  /** Returns whether this SpawnRunner supports executing the given Spawn using legacy fallbacks. */
+  default boolean canExecWithLegacyFallback(Spawn spawn) {
+    return false;
+  }
 
   /** Returns whether this SpawnRunner handles caching of actions internally. */
   boolean handlesCaching();

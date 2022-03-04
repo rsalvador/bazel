@@ -457,7 +457,9 @@ static vector<string> GetServerExeArgs(const blaze_util::Path &jvm_path,
                    startup_options.output_base.AsCommandLineArgument());
   result.push_back("--workspace_directory=" +
                    blaze_util::ConvertPath(workspace));
-  result.push_back("--default_system_javabase=" + GetSystemJavabase());
+  if (startup_options.autodetect_server_javabase) {
+    result.push_back("--default_system_javabase=" + GetSystemJavabase());
+  }
 
   if (!startup_options.server_jvm_out.IsEmpty()) {
     result.push_back("--server_jvm_out=" +
@@ -735,7 +737,7 @@ static void WriteFileToStderrOrDie(const blaze_util::Path &path) {
   FILE *fp = fopen(path.AsNativePath().c_str(), "r");
 #endif
 
-  if (fp == NULL) {
+  if (fp == nullptr) {
     BAZEL_DIE(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR)
         << "opening " << path.AsPrintablePath()
         << " failed: " << GetLastErrorString();
@@ -1381,7 +1383,7 @@ static map<string, EnvVarValue> PrepareEnvironmentForJvm() {
   // environment variables to modify the current process, we may actually use
   // such map to configure a process from scratch (via interfaces like execvpe
   // or posix_spawn), so we need to inherit any untouched variables.
-  for (char **entry = environ; *entry != NULL; entry++) {
+  for (char **entry = environ; *entry != nullptr; entry++) {
     const std::string var_value = *entry;
     std::string::size_type equals = var_value.find('=');
     if (equals == std::string::npos) {
@@ -2083,7 +2085,7 @@ unsigned int BlazeServer::Communicate(
 
     // Execute the requested program, but before doing so, flush everything
     // we still have to say.
-    fflush(NULL);
+    fflush(nullptr);
     ExecuteRunRequest(blaze_util::Path(request.argv(0)), argv);
   }
 

@@ -25,11 +25,13 @@ import com.google.devtools.build.buildjar.javac.plugins.dependency.DependencyMod
 import com.google.devtools.build.buildjar.javac.plugins.errorprone.ErrorPronePlugin;
 import com.google.devtools.build.lib.worker.ProtoWorkerMessageProcessor;
 import com.google.devtools.build.lib.worker.WorkRequestHandler;
+import com.google.devtools.build.lib.worker.WorkRequestHandler.WorkRequestHandlerBuilder;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Writer;
 import java.nio.charset.Charset;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 
@@ -43,10 +45,12 @@ public class BazelJavaBuilder {
     BazelJavaBuilder builder = new BazelJavaBuilder();
     if (args.length == 1 && args[0].equals("--persistent_worker")) {
       WorkRequestHandler workerHandler =
-          new WorkRequestHandler(
-              builder::parseAndBuild,
-              System.err,
-              new ProtoWorkerMessageProcessor(System.in, System.out));
+          new WorkRequestHandlerBuilder(
+                  builder::parseAndBuild,
+                  System.err,
+                  new ProtoWorkerMessageProcessor(System.in, System.out))
+              .setCpuUsageBeforeGc(Duration.ofSeconds(10))
+              .build();
       try {
         workerHandler.processRequests();
       } catch (IOException e) {

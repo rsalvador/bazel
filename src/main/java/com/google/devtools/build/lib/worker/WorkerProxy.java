@@ -39,7 +39,6 @@ final class WorkerProxy extends Worker {
   WorkerProxy(
       WorkerKey workerKey,
       int workerId,
-      Path workDir,
       Path logFile,
       WorkerMultiplexer workerMultiplexer) {
     super(workerKey, workerId, logFile);
@@ -56,7 +55,13 @@ final class WorkerProxy extends Worker {
   }
 
   @Override
+  public boolean isSandboxed() {
+    return false;
+  }
+
+  @Override
   void setReporter(EventHandler reporter) {
+    // We might have created this multiplexer after setting the reporter for existing multiplexers
     workerMultiplexer.setReporter(reporter);
   }
 
@@ -67,17 +72,17 @@ final class WorkerProxy extends Worker {
     workerMultiplexer.createProcess(workDir);
   }
 
-  /** Send the WorkRequest to multiplexer. */
   @Override
   synchronized void destroy() {
     try {
       WorkerMultiplexerManager.removeInstance(workerKey);
-    } catch (InterruptedException e) {
-      logger.atWarning().withCause(e).log(
-          "InterruptedException was caught while destroying multiplexer. "
-              + "It could because the multiplexer was interrupted.");
     } catch (UserExecException e) {
       logger.atWarning().withCause(e).log("Exception");
+    } finally {
+      if (this.shutdownHook != null) {
+        Runtime.getRuntime().removeShutdownHook(this.shutdownHook);
+        this.shutdownHook = null;
+      }
     }
   }
 
@@ -94,7 +99,7 @@ final class WorkerProxy extends Worker {
   }
 
   @Override
-  public void finishExecution(Path execRoot) {}
+  public void finishExecution(Path execRoot, SandboxOutputs outputs) {}
 
   @Override
   boolean diedUnexpectedly() {
@@ -109,5 +114,10 @@ final class WorkerProxy extends Worker {
   @Override
   String getRecordingStreamMessage() {
     return workerMultiplexer.getRecordingStreamMessage();
+  }
+
+  @Override
+  public String toString() {
+    return workerKey.getMnemonic() + " proxy worker #" + workerId;
   }
 }

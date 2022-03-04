@@ -41,7 +41,11 @@ cc_binary(
     }),
     linkopts = select({
         "//src/conditions:windows": [],
-        "//conditions:default": ["-lm"],
+        "//src/conditions:darwin": ["-lm"],
+        "//conditions:default": [
+            "-lm",
+            "-lrt",
+        ],
     }),
     deps = select({
         "//src/conditions:windows": [],
@@ -57,12 +61,6 @@ cc_binary(
     srcs = select({
         "//src/conditions:windows": ["build-runfiles-windows.cc"],
         "//conditions:default": ["build-runfiles.cc"],
-    }),
-    linkopts = select({
-        "//src/conditions:windows": [
-            "-DEFAULTLIB:advapi32.lib",  # RegGetValueW
-        ],
-        "//conditions:default": [],
     }),
     deps = ["//src/main/cpp/util:filesystem"] + select({
         "//src/conditions:windows": ["//src/main/native/windows:lib-file"],
@@ -86,7 +84,16 @@ cc_binary(
             "linux-sandbox-pid1.h",
         ],
     }),
-    linkopts = ["-lm"],
+    linkopts = select({
+        "//src/conditions:darwin": [],
+        "//src/conditions:freebsd": [],
+        "//src/conditions:openbsd": [],
+        "//src/conditions:windows": [],
+        "//conditions:default": [
+            "-lm",
+            "-lrt",
+        ],
+    }),
     deps = select({
         "//src/conditions:darwin": [],
         "//src/conditions:freebsd": [],

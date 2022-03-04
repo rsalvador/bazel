@@ -95,6 +95,18 @@ function test_compiles_hello_library_using_persistent_javac() {
     || fail "comparison failed"
 }
 
+function test_compiles_hello_library_using_persistent_javac_sibling_layout() {
+  write_hello_library_files
+
+  bazel build \
+    --experimental_sibling_repository_layout java/main:main \
+    --worker_max_instances=Javac=1 \
+    &> $TEST_log || fail "build failed"
+  expect_log "Created new ${WORKER_TYPE_LOG_STRING} Javac worker (id [0-9]\+)"
+  $BINS/java/main/main | grep -q "Hello, Library!;Hello, World!" \
+    || fail "comparison failed"
+}
+
 function prepare_example_worker() {
   cp ${example_worker} worker_lib.jar
   chmod +w worker_lib.jar
@@ -206,6 +218,39 @@ EOF
   assert_equals "HELLO WORLD" "$(cat $BINS/hello_world_uppercase.out)"
 }
 
+function test_worker_requests() {
+  prepare_example_worker
+  cat >>BUILD <<EOF
+work(
+  name = "hello_world",
+  worker = ":worker",
+  worker_args = ["--worker_protocol=${WORKER_PROTOCOL}"],
+  args = ["hello world", "--print_requests"],
+)
+
+work(
+  name = "hello_world_uppercase",
+  worker = ":worker",
+  worker_args = ["--worker_protocol=${WORKER_PROTOCOL}"],
+  args = ["--uppercase", "hello world", "--print_requests"],
+)
+EOF
+
+  bazel build  :hello_world &> $TEST_log \
+    || fail "build failed"
+  assert_contains "hello world" "$BINS/hello_world.out"
+  assert_contains "arguments: \"hello world\"" "$BINS/hello_world.out"
+  assert_contains "path:.*hello_world_worker_input" "$BINS/hello_world.out"
+  assert_not_contains "request_id" "$BINS/hello_world.out"
+
+  bazel build  :hello_world_uppercase &> $TEST_log \
+    || fail "build failed"
+  assert_contains "HELLO WORLD" "$BINS/hello_world_uppercase.out"
+  assert_contains "arguments: \"hello world\"" "$BINS/hello_world_uppercase.out"
+  assert_contains "path:.*hello_world_uppercase_worker_input" "$BINS/hello_world_uppercase.out"
+  assert_not_contains "request_id" "$BINS/hello_world_uppercase.out"
+}
+
 function test_shared_worker() {
   prepare_example_worker
   cat >>BUILD <<EOF
@@ -275,7 +320,8 @@ EOF
   assert_equals "1" $work_count
 }
 
-function test_build_succeeds_even_if_worker_exits() {
+# Disabled for being flaky, see b/182373389
+function DISABLED_test_build_succeeds_even_if_worker_exits() {
   prepare_example_worker
   cat >>BUILD <<EOF
 [work(

@@ -213,6 +213,7 @@ java_library(
         ":tree_artifact_value",
         ":unloaded_toolchain_context",
         ":unloaded_toolchain_context_impl",
+        ":workspace_info",
         ":workspace_name_function",
         ":workspace_name_value",
         ":workspace_status_function",
@@ -234,6 +235,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/analysis:buildinfo/build_info_key",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/build_configuration",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/build_options",
+        "//src/main/java/com/google/devtools/build/lib/analysis:config/config_conditions",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/config_matching_provider",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/core_options",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/fragment",
@@ -251,6 +253,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/analysis:dependency_key",
         "//src/main/java/com/google/devtools/build/lib/analysis:dependency_kind",
         "//src/main/java/com/google/devtools/build/lib/analysis:duplicate_exception",
+        "//src/main/java/com/google/devtools/build/lib/analysis:exec_group_collection",
         "//src/main/java/com/google/devtools/build/lib/analysis:inconsistent_aspect_order_exception",
         "//src/main/java/com/google/devtools/build/lib/analysis:platform_options",
         "//src/main/java/com/google/devtools/build/lib/analysis:resolved_toolchain_context",
@@ -272,6 +275,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/events",
         "//src/main/java/com/google/devtools/build/lib/packages",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
         "//src/main/java/com/google/devtools/build/lib/packages/semantics",
         "//src/main/java/com/google/devtools/build/lib/pkgcache",
         "//src/main/java/com/google/devtools/build/lib/pkgcache:QueryTransitivePackagePreloader",
@@ -1278,6 +1282,7 @@ java_library(
     deps = [
         ":broken_diff_awareness_exception",
         ":incompatible_view_exception",
+        ":workspace_info",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/common/options",
         "//third_party:jsr305",
@@ -1291,6 +1296,7 @@ java_library(
         ":broken_diff_awareness_exception",
         ":diff_awareness",
         ":incompatible_view_exception",
+        ":workspace_info",
         "//src/main/java/com/google/devtools/build/lib/events",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/common/options",
@@ -1887,7 +1893,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/packages",
         "//src/main/java/com/google/devtools/build/lib/pkgcache",
-        "//src/main/java/com/google/devtools/build/lib/remote/options",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
         "//src/main/java/com/google/devtools/build/skyframe",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
@@ -2765,6 +2770,11 @@ java_library(
         "//third_party:auto_value",
         "//third_party:guava",
     ],
+)
+
+java_library(
+    name = "workspace_info",
+    srcs = ["WorkspaceInfoFromDiff.java"],
 )
 
 java_library(

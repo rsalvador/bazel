@@ -29,15 +29,15 @@ import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.DependencyKind;
 import com.google.devtools.build.lib.analysis.DuplicateException;
+import com.google.devtools.build.lib.analysis.ExecGroupCollection.InvalidExecGroupException;
 import com.google.devtools.build.lib.analysis.InconsistentAspectOrderException;
 import com.google.devtools.build.lib.analysis.PlatformOptions;
 import com.google.devtools.build.lib.analysis.ResolvedToolchainContext;
-import com.google.devtools.build.lib.analysis.RuleContext.InvalidExecGroupException;
 import com.google.devtools.build.lib.analysis.TargetAndConfiguration;
 import com.google.devtools.build.lib.analysis.ToolchainCollection;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider;
+import com.google.devtools.build.lib.analysis.config.ConfigConditions;
 import com.google.devtools.build.lib.analysis.config.DependencyEvaluationException;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.configuredtargets.MergedConfiguredTarget;
@@ -58,12 +58,14 @@ import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.packages.NoSuchThingException;
 import com.google.devtools.build.lib.packages.OutputFile;
 import com.google.devtools.build.lib.packages.Package;
+import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.StarlarkAspect;
 import com.google.devtools.build.lib.packages.StarlarkAspectClass;
 import com.google.devtools.build.lib.packages.StarlarkDefinedAspect;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.Type.ConversionException;
+import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.profiler.memory.CurrentRuleTracker;
 import com.google.devtools.build.lib.skyframe.AspectValueKey.AspectKey;
 import com.google.devtools.build.lib.skyframe.BzlLoadFunction.BzlLoadFailedException;
@@ -78,6 +80,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.StarlarkSemantics;
 
 /**
  * The Skyframe function that generates aspects.
@@ -324,6 +327,34 @@ public final class AspectFunction implements SkyFunction {
           baseConfiguredTargetValue.getConfiguredTarget());
     }
 
+    // If the incompatible flag is set, the top-level aspect should not be applied on top-level
+    // targets whose rules do not advertise the aspect's required providers. The aspect should not
+    // also propagate to these targets dependencies.
+    StarlarkSemantics starlarkSemantics = PrecomputedValue.STARLARK_SEMANTICS.get(env);
+    if (starlarkSemantics == null) {
+      return null;
+    }
+    boolean checkRuleAdvertisedProviders =
+        starlarkSemantics.getBool(
+            BuildLanguageOptions.INCOMPATIBLE_TOP_LEVEL_ASPECTS_REQUIRE_PROVIDERS);
+    if (checkRuleAdvertisedProviders) {
+      Target target = associatedConfiguredTargetAndData.getTarget();
+      if (target instanceof Rule) {
+        if (!aspect
+            .getDefinition()
+            .getRequiredProviders()
+            .isSatisfiedBy(((Rule) target).getRuleClassObject().getAdvertisedProviders())) {
+          return new AspectValue(
+              key,
+              aspect,
+              target.getLocation(),
+              ConfiguredAspect.forNonapplicableTarget(),
+              /*transitivePackagesForPackageRootResolution=*/ NestedSetBuilder
+                  .<Package>stableOrder()
+                  .build());
+        }
+      }
+    }
 
     ImmutableList.Builder<Aspect> aspectPathBuilder = ImmutableList.builder();
 
@@ -403,7 +434,7 @@ public final class AspectFunction implements SkyFunction {
       }
 
       // Get the configuration targets that trigger this rule's configurable attributes.
-      ImmutableMap<Label, ConfigMatchingProvider> configConditions =
+      ConfigConditions configConditions =
           ConfiguredTargetFunction.getConfigConditions(
               env,
               originalTargetAndAspectConfiguration,
@@ -423,7 +454,7 @@ public final class AspectFunction implements SkyFunction {
                 resolver,
                 originalTargetAndAspectConfiguration,
                 aspectPath,
-                configConditions,
+                configConditions.asProviders(),
                 unloadedToolchainContext == null
                     ? null
                     : ToolchainCollection.builder()
@@ -640,7 +671,7 @@ public final class AspectFunction implements SkyFunction {
       ConfiguredAspectFactory aspectFactory,
       ConfiguredTargetAndData associatedTarget,
       BuildConfiguration aspectConfiguration,
-      ImmutableMap<Label, ConfigMatchingProvider> configConditions,
+      ConfigConditions configConditions,
       ResolvedToolchainContext toolchainContext,
       OrderedSetMultimap<DependencyKind, ConfiguredTargetAndData> directDeps,
       @Nullable NestedSetBuilder<Package> transitivePackagesForPackageRootResolution)

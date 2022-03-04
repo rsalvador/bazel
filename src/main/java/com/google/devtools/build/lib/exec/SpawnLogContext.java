@@ -91,6 +91,9 @@ public class SpawnLogContext implements ActionContext {
     try {
       for (Map.Entry<PathFragment, ActionInput> e : inputMap.entrySet()) {
         ActionInput input = e.getValue();
+        if (input instanceof VirtualActionInput.EmptyActionInput) {
+          continue;
+        }
         Path inputPath = execRoot.getRelative(input.getExecPathString());
         if (inputPath.isDirectory()) {
           listDirectoryContents(inputPath, builder::addInputs, metadataProvider);
@@ -135,6 +138,7 @@ public class SpawnLogContext implements ActionContext {
       builder.setTimeoutMillis(timeout.toMillis());
     }
     builder.setCacheable(Spawns.mayBeCached(spawn));
+    builder.setRemoteCacheable(Spawns.mayBeCachedRemotely(spawn));
     builder.setExitCode(result.exitCode());
     builder.setRemoteCacheHit(result.isCacheHit());
     builder.setRunner(result.getRunnerName());

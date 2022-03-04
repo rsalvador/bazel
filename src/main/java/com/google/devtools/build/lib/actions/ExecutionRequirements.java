@@ -160,6 +160,8 @@ public class ExecutionRequirements {
   /** Specify the type of worker protocol the worker uses. */
   public static final String REQUIRES_WORKER_PROTOCOL = "requires-worker-protocol";
 
+  public static final String SUPPORTS_WORKER_CANCELLATION = "supports-worker-cancellation";
+
   /** Denotes what the type of worker protocol the worker uses. */
   public enum WorkerProtocolFormat {
     JSON,
@@ -246,4 +248,8 @@ public class ExecutionRequirements {
    * followed by a {@code SIGKILL} after a grace period).
    */
   public static final String GRACEFUL_TERMINATION = "supports-graceful-termination";
+
+  /** Requires the execution service do NOT share caches across different workspace. */
+  public static final String DIFFERENTIATE_WORKSPACE_CACHE =
+      "internal-differentiate-workspace-cache";
 }

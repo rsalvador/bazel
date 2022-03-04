@@ -28,9 +28,7 @@ import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.LostInputsActionExecutionException;
 import com.google.devtools.build.lib.actions.LostInputsExecException;
 import com.google.devtools.build.lib.actions.MetadataProvider;
-import com.google.devtools.build.lib.actions.RunningActionEvent;
 import com.google.devtools.build.lib.actions.SandboxedSpawnStrategy;
-import com.google.devtools.build.lib.actions.SchedulingActionEvent;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.SpawnExecutedEvent;
 import com.google.devtools.build.lib.actions.SpawnResult;
@@ -94,6 +92,12 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
   @Override
   public boolean canExec(Spawn spawn, ActionContext.ActionContextRegistry actionContextRegistry) {
     return spawnRunner.canExec(spawn);
+  }
+
+  @Override
+  public boolean canExecWithLegacyFallback(
+      Spawn spawn, ActionContext.ActionContextRegistry actionContextRegistry) {
+    return spawnRunner.canExecWithLegacyFallback(spawn);
   }
 
   @Override
@@ -166,7 +170,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
         spawnLogContext.logSpawn(
             spawn,
             actionExecutionContext.getMetadataProvider(),
-            context.getInputMapping(),
+            context.getInputMapping(PathFragment.EMPTY_FRAGMENT),
             context.getTimeout(),
             spawnResult);
       } catch (IOException e) {
@@ -207,6 +211,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
     // Memoize the input mapping so that prefetchInputs can reuse it instead of recomputing it.
     // TODO(ulfjack): Guard against client modification of this map.
     private SortedMap<PathFragment, ActionInput> lazyInputMapping;
+    private PathFragment inputMappingBaseDirectory;
 
     SpawnExecutionContextImpl(
         Spawn spawn,
@@ -229,7 +234,8 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
       if (Spawns.shouldPrefetchInputsForLocalExecution(spawn)) {
         actionExecutionContext
             .getActionInputPrefetcher()
-            .prefetchFiles(getInputMapping().values(), getMetadataProvider());
+            .prefetchFiles(
+                getInputMapping(PathFragment.EMPTY_FRAGMENT).values(), getMetadataProvider());
       }
     }
 
@@ -281,22 +287,26 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
     }
 
     @Override
-    public SortedMap<PathFragment, ActionInput> getInputMapping() throws IOException {
-      if (lazyInputMapping == null) {
+    public SortedMap<PathFragment, ActionInput> getInputMapping(PathFragment baseDirectory)
+        throws IOException {
+      if (lazyInputMapping == null || !inputMappingBaseDirectory.equals(baseDirectory)) {
         try (SilentCloseable c =
             Profiler.instance().profile("AbstractSpawnStrategy.getInputMapping")) {
+          inputMappingBaseDirectory = baseDirectory;
           lazyInputMapping =
               spawnInputExpander.getInputMapping(
                   spawn,
                   actionExecutionContext.getArtifactExpander(),
+                  baseDirectory,
                   actionExecutionContext.getMetadataProvider());
         }
       }
+
       return lazyInputMapping;
     }
 
     @Override
-    public void report(ProgressStatus state, String name) {
+    public void report(ProgressStatus progress) {
       ActionExecutionMetadata action = spawn.getResourceOwner();
       if (action.getOwner() == null) {
         return;
@@ -308,19 +318,8 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnStrategy {
         return;
       }
 
-      // TODO(ulfjack): We should report more details to the UI.
       ExtendedEventHandler eventHandler = actionExecutionContext.getEventHandler();
-      switch (state) {
-        case EXECUTING:
-        case CHECKING_CACHE:
-          eventHandler.post(new RunningActionEvent(action, name));
-          break;
-        case SCHEDULING:
-          eventHandler.post(new SchedulingActionEvent(action, name));
-          break;
-        default:
-          break;
-      }
+      progress.postTo(eventHandler, action);
     }
 
     @Override

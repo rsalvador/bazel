@@ -38,11 +38,12 @@ import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.SpawnResult.Status;
 import com.google.devtools.build.lib.actions.Spawns;
 import com.google.devtools.build.lib.actions.UserExecException;
-import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.exec.BinTools;
 import com.google.devtools.build.lib.exec.RunfilesTreeUpdater;
+import com.google.devtools.build.lib.exec.SpawnExecutingEvent;
 import com.google.devtools.build.lib.exec.SpawnRunner;
+import com.google.devtools.build.lib.exec.SpawnSchedulingEvent;
 import com.google.devtools.build.lib.exec.local.LocalEnvProvider;
 import com.google.devtools.build.lib.sandbox.SandboxHelpers;
 import com.google.devtools.build.lib.sandbox.SandboxHelpers.SandboxInputs;
@@ -57,6 +58,7 @@ import com.google.devtools.build.lib.worker.WorkerProtocol.WorkRequest;
 import com.google.devtools.build.lib.worker.WorkerProtocol.WorkResponse;
 import com.google.protobuf.ByteString;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -77,8 +79,6 @@ final class WorkerSpawnRunner implements SpawnRunner {
   public static final String REASON_NO_FLAGFILE =
       "because the command-line arguments do not contain at least one @flagfile or --flagfile=";
   public static final String REASON_NO_TOOLS = "because the action has no tools";
-  public static final String REASON_NO_EXECUTION_INFO =
-      "because the action's execution info does not contain 'supports-workers=1'";
 
   /** Pattern for @flagfile.txt and --flagfile=flagfile.txt */
   private static final Pattern FLAG_FILE_PATTERN = Pattern.compile("(?:@|--?flagfile=)(.+)");
@@ -88,7 +88,6 @@ final class WorkerSpawnRunner implements SpawnRunner {
   private final WorkerPool workers;
   private final boolean multiplex;
   private final ExtendedEventHandler reporter;
-  private final SpawnRunner fallbackRunner;
   private final LocalEnvProvider localEnvProvider;
   private final BinTools binTools;
   private final ResourceManager resourceManager;
@@ -102,7 +101,6 @@ final class WorkerSpawnRunner implements SpawnRunner {
       WorkerPool workers,
       boolean multiplex,
       ExtendedEventHandler reporter,
-      SpawnRunner fallbackRunner,
       LocalEnvProvider localEnvProvider,
       BinTools binTools,
       ResourceManager resourceManager,
@@ -113,7 +111,6 @@ final class WorkerSpawnRunner implements SpawnRunner {
     this.workers = Preconditions.checkNotNull(workers);
     this.multiplex = multiplex;
     this.reporter = reporter;
-    this.fallbackRunner = fallbackRunner;
     this.localEnvProvider = localEnvProvider;
     this.binTools = binTools;
     this.resourceManager = resourceManager;
@@ -124,24 +121,6 @@ final class WorkerSpawnRunner implements SpawnRunner {
   @Override
   public String getName() {
     return "worker";
-  }
-
-  @Override
-  public SpawnResult exec(Spawn spawn, SpawnExecutionContext context)
-      throws ExecException, IOException, InterruptedException {
-    if (!Spawns.supportsWorkers(spawn) && !Spawns.supportsMultiplexWorkers(spawn)) {
-      // TODO(ulfjack): Don't circumvent SpawnExecutionPolicy. Either drop the warning here, or
-      // provide a mechanism in SpawnExecutionPolicy to report warnings.
-      reporter.handle(
-          Event.warn(
-              String.format(ERROR_MESSAGE_PREFIX + REASON_NO_EXECUTION_INFO, spawn.getMnemonic())));
-      return fallbackRunner.exec(spawn, context);
-    }
-
-    context.report(
-        ProgressStatus.SCHEDULING,
-        WorkerKey.makeWorkerTypeName(Spawns.supportsMultiplexWorkers(spawn)));
-    return actuallyExec(spawn, context);
   }
 
   @Override
@@ -160,8 +139,13 @@ final class WorkerSpawnRunner implements SpawnRunner {
     return false;
   }
 
-  private SpawnResult actuallyExec(Spawn spawn, SpawnExecutionContext context)
+  @Override
+  public SpawnResult exec(Spawn spawn, SpawnExecutionContext context)
       throws ExecException, IOException, InterruptedException {
+    context.report(
+        SpawnSchedulingEvent.create(
+            WorkerKey.makeWorkerTypeName(
+                Spawns.supportsMultiplexWorkers(spawn), context.speculating())));
     if (spawn.getToolFiles().isEmpty()) {
       throw createUserExecException(
           String.format(ERROR_MESSAGE_PREFIX + REASON_NO_TOOLS, spawn.getMnemonic()),
@@ -196,7 +180,10 @@ final class WorkerSpawnRunner implements SpawnRunner {
 
     SandboxInputs inputFiles =
         helpers.processInputFiles(
-            context.getInputMapping(), spawn, context.getArtifactExpander(), execRoot);
+            context.getInputMapping(PathFragment.EMPTY_FRAGMENT),
+            spawn,
+            context.getArtifactExpander(),
+            execRoot);
     SandboxOutputs outputs = helpers.getOutputs(spawn);
 
     WorkerProtocolFormat protocolFormat = Spawns.getWorkerProtocolFormat(spawn);
@@ -218,6 +205,7 @@ final class WorkerSpawnRunner implements SpawnRunner {
             workerFiles,
             context.speculating(),
             multiplex && Spawns.supportsMultiplexWorkers(spawn),
+            Spawns.supportsWorkerCancellation(spawn),
             protocolFormat);
 
     SpawnMetrics.Builder spawnMetrics =
@@ -293,7 +281,8 @@ final class WorkerSpawnRunner implements SpawnRunner {
       Spawn spawn,
       SpawnExecutionContext context,
       List<String> flagfiles,
-      MetadataProvider inputFileCache)
+      MetadataProvider inputFileCache,
+      WorkerKey key)
       throws IOException {
     WorkRequest.Builder requestBuilder = WorkRequest.newBuilder();
     for (String flagfile : flagfiles) {
@@ -312,13 +301,12 @@ final class WorkerSpawnRunner implements SpawnRunner {
         digest = ByteString.copyFromUtf8(HashCode.fromBytes(digestBytes).toString());
       }
 
-      requestBuilder
-          .addInputsBuilder()
-          .setPath(input.getExecPathString())
-          .setDigest(digest)
-          .build();
+      requestBuilder.addInputsBuilder().setPath(input.getExecPathString()).setDigest(digest);
     }
-    return requestBuilder.setRequestId(requestIdCounter.getAndIncrement()).build();
+    if (key.isMultiplex()) {
+      requestBuilder.setRequestId(requestIdCounter.getAndIncrement());
+    }
+    return requestBuilder.build();
   }
 
   /**
@@ -397,13 +385,13 @@ final class WorkerSpawnRunner implements SpawnRunner {
     Worker worker = null;
     WorkResponse response;
     WorkRequest request;
-
     ActionExecutionMetadata owner = spawn.getResourceOwner();
     try {
       Stopwatch setupInputsStopwatch = Stopwatch.createStarted();
       try {
         inputFiles.materializeVirtualInputs(execRoot);
       } catch (IOException e) {
+        restoreInterrupt(e);
         String message = "IOException while materializing virtual inputs:";
         throw createUserExecException(e, message, Code.VIRTUAL_INPUT_MATERIALIZATION_FAILURE);
       }
@@ -411,6 +399,7 @@ final class WorkerSpawnRunner implements SpawnRunner {
       try {
         context.prefetchInputs();
       } catch (IOException e) {
+        restoreInterrupt(e);
         String message = "IOException while prefetching for worker:";
         throw createUserExecException(e, message, Code.PREFETCH_FAILURE);
       }
@@ -420,8 +409,9 @@ final class WorkerSpawnRunner implements SpawnRunner {
       try {
         worker = workers.borrowObject(key);
         worker.setReporter(workerOptions.workerVerbose ? reporter : null);
-        request = createWorkRequest(spawn, context, flagFiles, inputFileCache);
+        request = createWorkRequest(spawn, context, flagFiles, inputFileCache, key);
       } catch (IOException e) {
+        restoreInterrupt(e);
         String message = "IOException while borrowing a worker from the pool:";
         throw createUserExecException(e, message, Code.BORROW_FAILURE);
       }
@@ -431,13 +421,14 @@ final class WorkerSpawnRunner implements SpawnRunner {
         // We acquired a worker and resources -- mark that as queuing time.
         spawnMetrics.setQueueTime(queueStopwatch.elapsed());
 
-        context.report(ProgressStatus.EXECUTING, WorkerKey.makeWorkerTypeName(key.getProxied()));
+        context.report(SpawnExecutingEvent.create(key.getWorkerTypeName()));
         try {
           // We consider `prepareExecution` to be also part of setup.
           Stopwatch prepareExecutionStopwatch = Stopwatch.createStarted();
           worker.prepareExecution(inputFiles, outputs, key.getWorkerFilesWithHashes().keySet());
           spawnMetrics.setSetupTime(setupInputsTime.plus(prepareExecutionStopwatch.elapsed()));
         } catch (IOException e) {
+          restoreInterrupt(e);
           String message =
               ErrorMessage.builder()
                   .message("IOException while preparing the execution environment of a worker:")
@@ -452,6 +443,7 @@ final class WorkerSpawnRunner implements SpawnRunner {
         try {
           worker.putRequest(request);
         } catch (IOException e) {
+          restoreInterrupt(e);
           String message =
               ErrorMessage.builder()
                   .message(
@@ -466,7 +458,31 @@ final class WorkerSpawnRunner implements SpawnRunner {
 
         try {
           response = worker.getResponse(request.getRequestId());
+        } catch (InterruptedException e) {
+          if (worker.isSandboxed()) {
+            // Sandboxed workers can safely finish their work async.
+            finishWorkAsync(
+                key,
+                worker,
+                request,
+                workerOptions.workerCancellation && Spawns.supportsWorkerCancellation(spawn));
+            worker = null;
+          } else if (!key.isSpeculative()) {
+            // Non-sandboxed workers interrupted outside of dynamic execution can only mean that
+            // the user interrupted the build, and we don't want to delay finishing. Instead we
+            // kill the worker.
+            // Technically, workers are always sandboxed under dynamic execution, at least for now.
+            try {
+              workers.invalidateObject(key, worker);
+            } catch (IOException e1) {
+              // Nothing useful we can do here, in fact it may not be possible to get here.
+            } finally {
+              worker = null;
+            }
+          }
+          throw e;
         } catch (IOException e) {
+          restoreInterrupt(e);
           // If protobuf or json reader couldn't parse the response, try to print whatever the
           // failing worker wrote to stdout - it's probably a stack trace or some kind of error
           // message that will help the user figure out why the compiler is failing.
@@ -484,12 +500,19 @@ final class WorkerSpawnRunner implements SpawnRunner {
         throw createEmptyResponseException(worker.getLogFile());
       }
 
+      if (response.getWasCancelled()) {
+        throw createUserExecException(
+            "Received cancel response for " + response.getRequestId() + " without having cancelled",
+            Code.FINISH_FAILURE);
+      }
+
       try {
         Stopwatch processOutputsStopwatch = Stopwatch.createStarted();
         context.lockOutputFiles();
-        worker.finishExecution(execRoot);
+        worker.finishExecution(execRoot, outputs);
         spawnMetrics.setProcessOutputsTime(processOutputsStopwatch.elapsed());
       } catch (IOException e) {
+        restoreInterrupt(e);
         String message =
             ErrorMessage.builder()
                 .message("IOException while finishing worker execution:")
@@ -505,8 +528,10 @@ final class WorkerSpawnRunner implements SpawnRunner {
           workers.invalidateObject(key, worker);
         } catch (IOException e1) {
           // The original exception is more important / helpful, so we'll just ignore this one.
+          restoreInterrupt(e1);
+        } finally {
+          worker = null;
         }
-        worker = null;
       }
 
       throw e;
@@ -517,6 +542,57 @@ final class WorkerSpawnRunner implements SpawnRunner {
     }
 
     return response;
+  }
+
+  /**
+   * Starts a thread to collect the response from a worker when it's no longer of interest.
+   *
+   * <p>This can happen either when we lost the race in dynamic execution or the build got
+   * interrupted. This takes ownership of the worker for purposes of returning it to the worker
+   * pool.
+   */
+  private void finishWorkAsync(
+      WorkerKey key, Worker worker, WorkRequest request, boolean canCancel) {
+    Thread reaper =
+        new Thread(
+            () -> {
+              Worker w = worker;
+              try {
+                if (canCancel) {
+                  WorkRequest cancelRequest =
+                      WorkRequest.newBuilder()
+                          .setRequestId(request.getRequestId())
+                          .setCancel(true)
+                          .build();
+                  w.putRequest(cancelRequest);
+                }
+                w.getResponse(request.getRequestId());
+              } catch (IOException | InterruptedException e1) {
+                // If this happens, we either can't trust the output of the worker, or we got
+                // interrupted while handling being interrupted. In the latter case, let's stop
+                // trying and just destroy the worker. If it's a singleplex worker, there will
+                // be a dangling response that we don't want to keep trying to read, so we destroy
+                // the worker.
+                try {
+                  workers.invalidateObject(key, w);
+                  w = null;
+                } catch (IOException | InterruptedException e2) {
+                  // The reaper thread can't do anything useful about this.
+                }
+              } finally {
+                if (w != null) {
+                  workers.returnObject(key, w);
+                }
+              }
+            },
+            "AsyncFinish-Worker-" + worker.workerId);
+    reaper.start();
+  }
+
+  private static void restoreInterrupt(IOException e) {
+    if (e instanceof InterruptedIOException) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   private static UserExecException createUserExecException(

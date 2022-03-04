@@ -15,8 +15,8 @@
 package com.google.devtools.build.lib.analysis.constraints;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.collect.Streams.stream;
 
+import com.google.auto.value.AutoValue;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Verify;
@@ -831,6 +831,45 @@ public class RuleContextConstraintSemantics implements ConstraintSemantics<RuleC
   }
 
   /**
+   * Provides information about a target's incompatibility.
+   *
+   * <p>After calling {@code checkForIncompatibility()}, the {@code isIncompatible} getter tells you
+   * whether the target is incompatible. If the target is incompatible, then {@code
+   * underlyingTarget} tells you which underlying target provided the incompatibility. For the vast
+   * majority of targets this is the same one passed to {@code checkForIncompatibility()}. In some
+   * instances like {@link OutputFileConfiguredTarget}, however, the {@code underlyingTarget} is the
+   * rule that generated the file.
+   */
+  @AutoValue
+  public abstract static class IncompatibleCheckResult {
+    private static IncompatibleCheckResult create(
+        boolean isIncompatible, ConfiguredTarget underlyingTarget) {
+      return new AutoValue_RuleContextConstraintSemantics_IncompatibleCheckResult(
+          isIncompatible, underlyingTarget);
+    }
+
+    public abstract boolean isIncompatible();
+
+    public abstract ConfiguredTarget underlyingTarget();
+  }
+
+  /**
+   * Checks whether the target is incompatible.
+   *
+   * <p>See the documentation for {@link RuleContextConstraintSemantics.IncompatibleCheckResult} for
+   * more information.
+   */
+  public static IncompatibleCheckResult checkForIncompatibility(ConfiguredTarget target) {
+    if (target instanceof OutputFileConfiguredTarget) {
+      // For generated files, we want to query the generating rule for providers. genrule() for
+      // example doesn't attach providers like IncompatiblePlatformProvider to its outputs.
+      target = ((OutputFileConfiguredTarget) target).getGeneratingRule();
+    }
+    return IncompatibleCheckResult.create(
+        target.get(IncompatiblePlatformProvider.PROVIDER) != null, target);
+  }
+
+  /**
    * Creates an incompatible {@link ConfiguredTarget} if the corresponding rule is incompatible.
    *
    * <p>Returns null if the target is not incompatible.
@@ -854,16 +893,13 @@ public class RuleContextConstraintSemantics implements ConstraintSemantics<RuleC
       RuleContext ruleContext,
       OrderedSetMultimap<DependencyKind, ConfiguredTargetAndData> prerequisiteMap)
       throws ActionConflictException, InterruptedException {
-    if (!ruleContext.getRule().getRuleClassObject().useToolchainResolution()) {
-      return null;
-    }
-
-    // This is incompatible if explicitly specified to be.
-    if (ruleContext.attributes().has("target_compatible_with")) {
+    // The target (ruleContext) is incompatible if explicitly specified to be.
+    if (ruleContext.getRule().getRuleClassObject().useToolchainResolution()
+        && ruleContext.attributes().has("target_compatible_with")) {
       ImmutableList<ConstraintValueInfo> invalidConstraintValues =
-          stream(
-                  PlatformProviderUtils.constraintValues(
-                      ruleContext.getPrerequisites("target_compatible_with")))
+          PlatformProviderUtils.constraintValues(
+                  ruleContext.getPrerequisites("target_compatible_with"))
+              .stream()
               .filter(cv -> !ruleContext.targetPlatformHasConstraint(cv))
               .collect(toImmutableList());
 
@@ -873,22 +909,12 @@ public class RuleContextConstraintSemantics implements ConstraintSemantics<RuleC
     }
 
     // This is incompatible if one of the dependencies is as well.
-    ImmutableList.Builder<ConfiguredTarget> incompatibleDependenciesBuilder =
-        ImmutableList.builder();
-    for (ConfiguredTargetAndData infoCollection : prerequisiteMap.values()) {
-      ConfiguredTarget dependency = infoCollection.getConfiguredTarget();
-      if (dependency instanceof OutputFileConfiguredTarget) {
-        // For generated files, we want to query the generating rule for providers. genrule() for
-        // example doesn't attach providers like IncompatiblePlatformProvider to its outputs.
-        dependency = ((OutputFileConfiguredTarget) dependency).getGeneratingRule();
-      }
-      if (dependency.getProvider(IncompatiblePlatformProvider.class) != null) {
-        incompatibleDependenciesBuilder.add(dependency);
-      }
-    }
-
     ImmutableList<ConfiguredTarget> incompatibleDependencies =
-        incompatibleDependenciesBuilder.build();
+        prerequisiteMap.values().stream()
+            .map(value -> checkForIncompatibility(value.getConfiguredTarget()))
+            .filter(result -> result.isIncompatible())
+            .map(result -> result.underlyingTarget())
+            .collect(toImmutableList());
     if (!incompatibleDependencies.isEmpty()) {
       return createIncompatibleConfiguredTarget(ruleContext, incompatibleDependencies, null);
     }
@@ -956,13 +982,11 @@ public class RuleContextConstraintSemantics implements ConstraintSemantics<RuleC
     builder.setFilesToBuild(filesToBuild);
 
     if (targetsResponsibleForIncompatibility != null) {
-      builder.add(
-          IncompatiblePlatformProvider.class,
+      builder.addNativeDeclaredProvider(
           IncompatiblePlatformProvider.incompatibleDueToTargets(
               targetsResponsibleForIncompatibility));
     } else if (violatedConstraints != null) {
-      builder.add(
-          IncompatiblePlatformProvider.class,
+      builder.addNativeDeclaredProvider(
           IncompatiblePlatformProvider.incompatibleDueToConstraints(violatedConstraints));
     } else {
       throw new IllegalArgumentException(
@@ -983,14 +1007,14 @@ public class RuleContextConstraintSemantics implements ConstraintSemantics<RuleC
     if (!outputArtifacts.isEmpty()) {
       Artifact executable = outputArtifacts.get(0);
       RunfilesSupport runfilesSupport =
-          RunfilesSupport.withExecutable(ruleContext, runfiles, executable);
+          RunfilesSupport.withExecutableButNoArgs(ruleContext, runfiles, executable);
       builder.setRunfilesSupport(runfilesSupport, executable);
 
       ruleContext.registerAction(
           new FailAction(
               ruleContext.getActionOwner(),
               outputArtifacts,
-              "Can't build this. This target is incompatible.",
+              "Can't build this. This target is incompatible. Please file a bug upstream.",
               Code.CANT_BUILD_INCOMPATIBLE_TARGET));
     }
     return builder.build();

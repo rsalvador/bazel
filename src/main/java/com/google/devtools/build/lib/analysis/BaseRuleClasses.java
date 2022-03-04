@@ -148,6 +148,8 @@ public class BaseRuleClasses {
             return runUnder != null ? runUnder.getLabel() : null;
           });
 
+  public static final String TEST_RUNNER_EXEC_GROUP = "test";
+
   /**
    * A base rule for all test rules.
    */
@@ -155,6 +157,7 @@ public class BaseRuleClasses {
     @Override
     public RuleClass build(RuleClass.Builder builder, RuleDefinitionEnvironment env) {
       return builder
+          .addExecGroup(TEST_RUNNER_EXEC_GROUP)
           .requiresConfigurationFragments(TestConfiguration.class)
           // TestConfiguration only needed to create TestAction and TestProvider
           // Only necessary at top-level and can be skipped if trimmed.
@@ -194,6 +197,8 @@ public class BaseRuleClasses {
                   .taggable()
                   .nonconfigurable("policy decision: should be consistent across configurations"))
           .add(attr("args", STRING_LIST))
+          .add(attr("env", STRING_DICT))
+          .add(attr("env_inherit", STRING_LIST))
           // Input files for every test action
           .add(
               attr("$test_wrapper", LABEL)
@@ -475,6 +480,7 @@ public class BaseRuleClasses {
     public RuleClass build(RuleClass.Builder builder, RuleDefinitionEnvironment env) {
       return builder
           .add(attr("args", STRING_LIST))
+          .add(attr("env", STRING_DICT))
           .add(attr("output_licenses", LICENSE))
           .add(
               attr("$is_executable", BOOLEAN)

@@ -63,9 +63,13 @@ public final class RemoteOptions extends OptionsBase {
       documentationCategory = OptionDocumentationCategory.REMOTE,
       effectTags = {OptionEffectTag.HOST_MACHINE_RESOURCE_OPTIMIZATIONS},
       help =
-          "The max. number of concurrent network connections to the remote cache/executor. By "
-              + "default Bazel limits the number of TCP connections to 100. Setting this flag to "
-              + "0 will make Bazel choose the number of connections automatically.")
+          "Limit the max number of concurrent connections to remote cache/executor. By default the"
+              + " value is 100. Setting this to 0 means no limitation.\n"
+              + "For HTTP remote cache, one TCP connection could handle one request at one time, so"
+              + " Bazel could make up to --remote_max_connections concurrent requests.\n"
+              + "For gRPC remote cache/executor, one gRPC channel could usually handle 100+"
+              + " concurrent requests, so Bazel could make around `--remote_max_connections * 100`"
+              + " concurrent requests.")
   public int remoteMaxConnections;
 
   @Option(
@@ -87,6 +91,15 @@ public final class RemoteOptions extends OptionsBase {
       effectTags = {OptionEffectTag.UNKNOWN},
       help = "Whether to use keepalive for remote execution calls.")
   public boolean remoteExecutionKeepalive;
+
+  @Option(
+      name = "experimental_remote_capture_corrupted_outputs",
+      defaultValue = "null",
+      documentationCategory = OptionDocumentationCategory.REMOTE,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      converter = OptionsUtils.PathFragmentConverter.class,
+      help = "A path to a directory where the corrupted outputs will be captured to.")
+  public PathFragment remoteCaptureCorruptedOutputs;
 
   @Option(
       name = "remote_cache",
@@ -181,6 +194,19 @@ public final class RemoteOptions extends OptionsBase {
               + " the unit is omitted, the value is interpreted as seconds.")
   public Duration remoteTimeout;
 
+  @Option(
+      name = "remote_bytestream_uri_prefix",
+      defaultValue = "null",
+      documentationCategory = OptionDocumentationCategory.REMOTE,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help =
+          "The hostname and instance name to be used in bytestream:// URIs that are written into "
+              + "build event streams. This option can be set when builds are performed using a "
+              + "proxy, which causes the values of --remote_executor and --remote_instance_name "
+              + "to no longer correspond to the canonical name of the remote execution service. "
+              + "When not set, it will default to \"${hostname}/${instance_name}\".")
+  public String remoteBytestreamUriPrefix;
+
   /** Returns the specified duration. Assumes seconds if unitless. */
   public static class RemoteTimeoutConverter implements Converter<Duration> {
     private static final Pattern UNITLESS_REGEX = Pattern.compile("^[0-9]+$");
@@ -252,6 +278,19 @@ public final class RemoteOptions extends OptionsBase {
               + " cache, but not in the remote cache.\n"
               + "See #8216 for details.")
   public boolean incompatibleRemoteResultsIgnoreDisk;
+
+  @Option(
+      name = "incompatible_remote_output_paths_relative_to_input_root",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.REMOTE,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {
+        OptionMetadataTag.INCOMPATIBLE_CHANGE,
+        OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+      },
+      help =
+          "If set to true, output paths are relative to input root instead of working directory.")
+  public boolean incompatibleRemoteOutputPathsRelativeToInputRoot;
 
   @Option(
       name = "remote_instance_name",

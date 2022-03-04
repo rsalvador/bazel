@@ -60,6 +60,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nullable;
 
 /** This module provides the Sandbox spawn strategy. */
@@ -425,9 +426,14 @@ public final class SandboxModule extends BlazeModule {
     return null;
   }
 
-  private static SpawnRunner withFallback(CommandEnvironment env, SpawnRunner sandboxSpawnRunner) {
+  private static SpawnRunner withFallback(
+      CommandEnvironment env, AbstractSandboxSpawnRunner sandboxSpawnRunner) {
+    SandboxOptions sandboxOptions = env.getOptions().getOptions(SandboxOptions.class);
     return new SandboxFallbackSpawnRunner(
-        sandboxSpawnRunner, createFallbackRunner(env), env.getReporter());
+        sandboxSpawnRunner,
+        createFallbackRunner(env),
+        env.getReporter(),
+        sandboxOptions != null && sandboxOptions.legacyLocalFallback);
   }
 
   private static SpawnRunner createFallbackRunner(CommandEnvironment env) {
@@ -444,18 +450,29 @@ public final class SandboxModule extends BlazeModule {
         RunfilesTreeUpdater.INSTANCE);
   }
 
+  /**
+   * A SpawnRunner that does sandboxing if possible, but might fall back to local execution if
+   * ----incompatible_legacy_local_fallback is true and no other strategy has been usable. This is a
+   * legacy functionality from before the strategies system was added, and can deceive the user into
+   * thinking a build is hermetic when it isn't really. TODO(b/178356138): Flip flag to default to
+   * false and then later remove this code entirely.
+   */
   private static final class SandboxFallbackSpawnRunner implements SpawnRunner {
     private final SpawnRunner sandboxSpawnRunner;
     private final SpawnRunner fallbackSpawnRunner;
-    private final ExtendedEventHandler extendedEventHandler;
+    private final ExtendedEventHandler reporter;
+    private static final AtomicBoolean warningEmitted = new AtomicBoolean();
+    private final boolean fallbackAllowed;
 
     SandboxFallbackSpawnRunner(
         SpawnRunner sandboxSpawnRunner,
         SpawnRunner fallbackSpawnRunner,
-        ExtendedEventHandler extendedEventHandler) {
+        ExtendedEventHandler reporter,
+        boolean fallbackAllowed) {
       this.sandboxSpawnRunner = sandboxSpawnRunner;
       this.fallbackSpawnRunner = fallbackSpawnRunner;
-      this.extendedEventHandler = extendedEventHandler;
+      this.reporter = reporter;
+      this.fallbackAllowed = fallbackAllowed;
     }
 
     @Override
@@ -473,14 +490,44 @@ public final class SandboxModule extends BlazeModule {
       } else {
         spawnResult = fallbackSpawnRunner.exec(spawn, context);
       }
-      extendedEventHandler.post(
-          new SpawnExecutedEvent(spawn, spawnResult, spawnExecutionStartInstant));
+      reporter.post(new SpawnExecutedEvent(spawn, spawnResult, spawnExecutionStartInstant));
       return spawnResult;
     }
 
     @Override
     public boolean canExec(Spawn spawn) {
-      return sandboxSpawnRunner.canExec(spawn) || fallbackSpawnRunner.canExec(spawn);
+      return sandboxSpawnRunner.canExec(spawn);
+    }
+
+    @Override
+    public boolean canExecWithLegacyFallback(Spawn spawn) {
+      boolean canExec = !sandboxSpawnRunner.canExec(spawn) && fallbackSpawnRunner.canExec(spawn);
+      if (canExec) {
+        // We give a single warning to use strategies instead, whether or not we allow the fallback
+        // to happen. This allows people to switch early, but also explains why the build fails
+        // once we flip the flag. Unfortunately, we can't easily tell if the flag was explicitly
+        // set, if we could we should omit the warnings in that case.
+        if (warningEmitted.compareAndSet(false, true)) {
+          if (fallbackAllowed) {
+            reporter.handle(
+                Event.warn(
+                    String.format(
+                        "%s uses implicit fallback from sandbox to local, which is deprecated"
+                            + " because it is not hermetic. Prefer setting an explicit list of"
+                            + " strategies.",
+                        spawn.getMnemonic())));
+          } else {
+            reporter.handle(
+                Event.warn(
+                    String.format(
+                        "Implicit fallback from sandbox to local is deprecated. Prefer setting an"
+                            + " explicit list of strategies for %s, or for now pass"
+                            + " --incompatible_legacy_local_fallback.",
+                        spawn.getMnemonic())));
+          }
+        }
+      }
+      return canExec && fallbackAllowed;
     }
 
     @Override
@@ -491,7 +538,9 @@ public final class SandboxModule extends BlazeModule {
     @Override
     public void cleanupSandboxBase(Path sandboxBase, TreeDeleter treeDeleter) throws IOException {
       sandboxSpawnRunner.cleanupSandboxBase(sandboxBase, treeDeleter);
-      fallbackSpawnRunner.cleanupSandboxBase(sandboxBase, treeDeleter);
+      if (fallbackSpawnRunner != null) {
+        fallbackSpawnRunner.cleanupSandboxBase(sandboxBase, treeDeleter);
+      }
     }
   }
 
@@ -557,14 +606,17 @@ public final class SandboxModule extends BlazeModule {
 
     SandboxOptions options = env.getOptions().getOptions(SandboxOptions.class);
     int asyncTreeDeleteThreads = options != null ? options.asyncTreeDeleteIdleThreads : 0;
-    if (treeDeleter != null && asyncTreeDeleteThreads > 0) {
-      // If asynchronous deletions were requested, they may still be ongoing so let them be: trying
-      // to delete the base tree synchronously could fail as we can race with those other deletions,
-      // and scheduling an asynchronous deletion could race with future builds.
-      AsynchronousTreeDeleter treeDeleter =
-          (AsynchronousTreeDeleter) checkNotNull(this.treeDeleter);
+
+    // If asynchronous deletions were requested, they may still be ongoing so let them be: trying
+    // to delete the base tree synchronously could fail as we can race with those other deletions,
+    // and scheduling an asynchronous deletion could race with future builds.
+    if (asyncTreeDeleteThreads > 0 && treeDeleter instanceof AsynchronousTreeDeleter) {
+      AsynchronousTreeDeleter treeDeleter = (AsynchronousTreeDeleter) this.treeDeleter;
       treeDeleter.setThreads(asyncTreeDeleteThreads);
     }
+    // `treeDeleter` might not be an AsynchronousTreeDeleter if the user changed the option but
+    // then interrupted the build before the start of the execution phase. But that's OK, there
+    // will be nothing new to delete. See #13240.
 
     if (shouldCleanupSandboxBase) {
       try {

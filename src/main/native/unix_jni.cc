@@ -109,7 +109,7 @@ void PostException(JNIEnv *env, int error_number, const std::string& message) {
       exception_classname = "java/io/IOException";
   }
   jclass exception_class = env->FindClass(exception_classname);
-  if (exception_class != NULL) {
+  if (exception_class != nullptr) {
     env->ThrowNew(exception_class,
                   (message + " (" + ErrorMessage(error_number) + ")").c_str());
   } else {
@@ -136,21 +136,21 @@ static bool PostRuntimeException(JNIEnv *env, int error_number,
       exception_classname = "java/lang/UnsupportedOperationException";
       break;
     default:
-      exception_classname = NULL;
+      exception_classname = nullptr;
   }
 
-  if (exception_classname == NULL) {
+  if (exception_classname == nullptr) {
     return false;
   }
 
   jclass exception_class = env->FindClass(exception_classname);
-  if (exception_class != NULL) {
-     std::string message(file_path);
-     message += " (";
-     message += ErrorMessage(error_number);
-     message += ")";
-     env->ThrowNew(exception_class, message.c_str());
-     return true;
+  if (exception_class != nullptr) {
+    std::string message(file_path);
+    message += " (";
+    message += ErrorMessage(error_number);
+    message += ")";
+    env->ThrowNew(exception_class, message.c_str());
+    return true;
   } else {
     abort();  // panic!
     return false;  // Not reachable.
@@ -166,7 +166,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_readlink(JNIEnv *env,
                                                      jstring path) {
   const char *path_chars = GetStringLatin1Chars(env, path);
   char target[PATH_MAX] = "";
-  jstring r = NULL;
+  jstring r = nullptr;
   if (readlink(path_chars, target, arraysize(target)) == -1) {
     PostException(env, errno, path_chars);
   } else {
@@ -217,63 +217,52 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_symlink(JNIEnv *env,
   link_common(env, oldpath, newpath, ::symlink);
 }
 
+namespace {
+static jclass file_status_class = nullptr;
+static jclass errno_file_status_class = nullptr;
+static jmethodID file_status_class_ctor = nullptr;
+static jmethodID errno_file_status_class_no_error_ctor = nullptr;
+static jmethodID errno_file_status_class_errorno_ctor = nullptr;
+static jclass dirents_class = nullptr;
+static jmethodID dirents_ctor = nullptr;
+
+static jclass makeStaticClass(JNIEnv *env, const char *name) {
+  jclass lookup_result = env->FindClass(name);
+  CHECK(lookup_result != nullptr);
+  return static_cast<jclass>(env->NewGlobalRef(lookup_result));
+}
+
+static jmethodID getConstructorID(JNIEnv *env, jclass clazz,
+                                  const char *parameters) {
+  jmethodID method = env->GetMethodID(clazz, "<init>", parameters);
+  CHECK(method != nullptr);
+  return method;
+}
+
 static jobject NewFileStatus(JNIEnv *env,
                              const portable_stat_struct &stat_ref) {
-  static jclass file_status_class = NULL;
-  if (file_status_class == NULL) {  // note: harmless race condition
-    jclass local =
-        env->FindClass("com/google/devtools/build/lib/unix/FileStatus");
-    CHECK(local != NULL);
-    file_status_class = static_cast<jclass>(env->NewGlobalRef(local));
-  }
-
-  static jmethodID method = NULL;
-  if (method == NULL) {  // note: harmless race condition
-    method = env->GetMethodID(file_status_class, "<init>", "(IIIIIIIJIJ)V");
-    CHECK(method != NULL);
-  }
-
   return env->NewObject(
-      file_status_class, method, stat_ref.st_mode,
+      file_status_class, file_status_class_ctor, stat_ref.st_mode,
       StatSeconds(stat_ref, STAT_ATIME), StatNanoSeconds(stat_ref, STAT_ATIME),
       StatSeconds(stat_ref, STAT_MTIME), StatNanoSeconds(stat_ref, STAT_MTIME),
       StatSeconds(stat_ref, STAT_CTIME), StatNanoSeconds(stat_ref, STAT_CTIME),
-      static_cast<jlong>(stat_ref.st_size),
-      static_cast<int>(stat_ref.st_dev), static_cast<jlong>(stat_ref.st_ino));
+      static_cast<jlong>(stat_ref.st_size), static_cast<int>(stat_ref.st_dev),
+      static_cast<jlong>(stat_ref.st_ino));
 }
 
 static jobject NewErrnoFileStatus(JNIEnv *env,
                                   int saved_errno,
                                   const portable_stat_struct &stat_ref) {
-  static jclass errno_file_status_class = NULL;
-  if (errno_file_status_class == NULL) {  // note: harmless race condition
-    jclass local =
-        env->FindClass("com/google/devtools/build/lib/unix/ErrnoFileStatus");
-    CHECK(local != NULL);
-    errno_file_status_class = static_cast<jclass>(env->NewGlobalRef(local));
-  }
-
-  static jmethodID no_error_ctor = NULL;
-  if (no_error_ctor == NULL) {  // note: harmless race condition
-    no_error_ctor = env->GetMethodID(errno_file_status_class,
-                                     "<init>", "(IIIIIIIJIJ)V");
-    CHECK(no_error_ctor != NULL);
-  }
-
-  static jmethodID errorno_ctor = NULL;
-  if (errorno_ctor == NULL) {  // note: harmless race condition
-    errorno_ctor = env->GetMethodID(errno_file_status_class, "<init>", "(I)V");
-    CHECK(errorno_ctor != NULL);
-  }
-
   if (saved_errno != 0) {
-    return env->NewObject(errno_file_status_class, errorno_ctor, saved_errno);
+    return env->NewObject(errno_file_status_class,
+                          errno_file_status_class_errorno_ctor, saved_errno);
   }
   return env->NewObject(
-      errno_file_status_class, no_error_ctor, stat_ref.st_mode,
-      StatSeconds(stat_ref, STAT_ATIME), StatNanoSeconds(stat_ref, STAT_ATIME),
-      StatSeconds(stat_ref, STAT_MTIME), StatNanoSeconds(stat_ref, STAT_MTIME),
-      StatSeconds(stat_ref, STAT_CTIME), StatNanoSeconds(stat_ref, STAT_CTIME),
+      errno_file_status_class, errno_file_status_class_no_error_ctor,
+      stat_ref.st_mode, StatSeconds(stat_ref, STAT_ATIME),
+      StatNanoSeconds(stat_ref, STAT_ATIME), StatSeconds(stat_ref, STAT_MTIME),
+      StatNanoSeconds(stat_ref, STAT_MTIME), StatSeconds(stat_ref, STAT_CTIME),
+      StatNanoSeconds(stat_ref, STAT_CTIME),
       static_cast<jlong>(stat_ref.st_size), static_cast<int>(stat_ref.st_dev),
       static_cast<jlong>(stat_ref.st_ino));
 }
@@ -284,8 +273,28 @@ static void SetIntField(JNIEnv *env,
                         const char *name,
                         int val) {
   jfieldID fid = env->GetFieldID(clazz, name, "I");
-  CHECK(fid != NULL);
+  CHECK(fid != nullptr);
   env->SetIntField(object, fid, val);
+}
+}  // namespace
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_google_devtools_build_lib_unix_NativePosixFiles_initJNIClasses(
+    JNIEnv *env, jclass clazz) {
+  file_status_class =
+      makeStaticClass(env, "com/google/devtools/build/lib/unix/FileStatus");
+  errno_file_status_class = makeStaticClass(
+      env, "com/google/devtools/build/lib/unix/ErrnoFileStatus");
+  file_status_class_ctor =
+      getConstructorID(env, file_status_class, "(IIIIIIIJIJ)V");
+  errno_file_status_class_no_error_ctor =
+      getConstructorID(env, errno_file_status_class, "(IIIIIIIJIJ)V");
+  errno_file_status_class_errorno_ctor =
+      getConstructorID(env, errno_file_status_class, "(I)V");
+  dirents_class = makeStaticClass(
+      env, "com/google/devtools/build/lib/unix/NativePosixFiles$Dirents");
+  dirents_ctor =
+      getConstructorID(env, dirents_class, "([Ljava/lang/String;[B)V");
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -299,6 +308,7 @@ Java_com_google_devtools_build_lib_unix_ErrnoFileStatus_00024ErrnoConstants_init
   SetIntField(env, clazz, errno_constants, "ENAMETOOLONG", ENAMETOOLONG);
 }
 
+namespace {
 static jobject StatCommon(JNIEnv *env, jstring path,
                           int (*stat_function)(const char *,
                                                portable_stat_struct *),
@@ -318,11 +328,11 @@ static jobject StatCommon(JNIEnv *env, jstring path,
 
     if (PostRuntimeException(env, saved_errno, path_chars)) {
       ReleaseStringLatin1Chars(path_chars);
-      return NULL;
+      return nullptr;
     } else if (should_throw) {
       PostException(env, saved_errno, path_chars);
       ReleaseStringLatin1Chars(path_chars);
-      return NULL;
+      return nullptr;
     }
   }
   ReleaseStringLatin1Chars(path_chars);
@@ -331,6 +341,7 @@ static jobject StatCommon(JNIEnv *env, jstring path,
     ? NewFileStatus(env, statbuf)
     : NewErrnoFileStatus(env, saved_errno, statbuf);
 }
+}  // namespace
 
 /*
  * Class:     com.google.devtools.build.lib.unix.NativePosixFiles
@@ -402,7 +413,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_utime(JNIEnv *env,
   }
 #else
   struct utimbuf buf = { modtime, modtime };
-  struct utimbuf *bufptr = now ? NULL : &buf;
+  struct utimbuf *bufptr = now ? nullptr : &buf;
   if (::utime(path_chars, bufptr) == -1) {
     // EACCES ENOENT EMULTIHOP ELOOP EINTR
     // ENOTDIR ENOLINK EPERM EROFS   -> IOException
@@ -536,25 +547,11 @@ cleanup:
   ReleaseStringLatin1Chars(path_chars);
 }
 
+namespace {
 static jobject NewDirents(JNIEnv *env,
                           jobjectArray names,
                           jbyteArray types) {
-  // See http://java.sun.com/docs/books/jni/html/fldmeth.html#26855
-  static jclass dirents_class = NULL;
-  if (dirents_class == NULL) {  // note: harmless race condition
-    jclass local = env->FindClass("com/google/devtools/build/lib/unix/NativePosixFiles$Dirents");
-    CHECK(local != NULL);
-    dirents_class = static_cast<jclass>(env->NewGlobalRef(local));
-  }
-
-  static jmethodID ctor = NULL;
-  if (ctor == NULL) {  // note: harmless race condition
-    ctor =
-        env->GetMethodID(dirents_class, "<init>", "([Ljava/lang/String;[B)V");
-    CHECK(ctor != NULL);
-  }
-
-  return env->NewObject(dirents_class, ctor, names, types);
+  return env->NewObject(dirents_class, dirents_ctor, names, types);
 }
 
 static char GetDirentType(struct dirent *entry,
@@ -582,6 +579,7 @@ static char GetDirentType(struct dirent *entry,
       return '?';
   }
 }
+}  // namespace
 
 /*
  * Class:     com.google.devtools.build.lib.unix.NativePosixFiles
@@ -596,15 +594,16 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_readdir(JNIEnv *env,
                                                     jchar read_types) {
   const char *path_chars = GetStringLatin1Chars(env, path);
   DIR *dirh;
-  while ((dirh = ::opendir(path_chars)) == NULL && errno == EINTR) { }
-  if (dirh == NULL) {
+  while ((dirh = ::opendir(path_chars)) == nullptr && errno == EINTR) {
+  }
+  if (dirh == nullptr) {
     // EACCES EMFILE ENFILE ENOENT ENOTDIR -> IOException
     // ENOMEM                              -> OutOfMemoryError
     PostException(env, errno, path_chars);
   }
   ReleaseStringLatin1Chars(path_chars);
-  if (dirh == NULL) {
-    return NULL;
+  if (dirh == nullptr) {
+    return nullptr;
   }
   int fd = dirfd(dirh);
 
@@ -615,7 +614,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_readdir(JNIEnv *env,
     // EOF, this is the only way to reliably distinguish EOF from error.
     errno = 0;
     struct dirent *entry = ::readdir(dirh);
-    if (entry == NULL) {
+    if (entry == nullptr) {
       if (errno == 0) break;  // EOF
       // It is unclear whether an error can also skip some records.
       // That does not appear to happen with glibc, at least.
@@ -624,7 +623,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_readdir(JNIEnv *env,
       // Otherwise, this is a real error we should report.
       PostException(env, errno, path_chars);
       ::closedir(dirh);
-      return NULL;
+      return nullptr;
     }
     // Omit . and .. from results.
     if (entry->d_name[0] == '.') {
@@ -639,25 +638,25 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_readdir(JNIEnv *env,
 
   if (::closedir(dirh) < 0 && errno != EINTR) {
     PostException(env, errno, path_chars);
-    return NULL;
+    return nullptr;
   }
 
   size_t len = entries.size();
   jclass jlStringClass = env->GetObjectClass(path);
-  jobjectArray names_obj = env->NewObjectArray(len, jlStringClass, NULL);
-  if (names_obj == NULL && env->ExceptionOccurred()) {
-    return NULL;  // async exception!
+  jobjectArray names_obj = env->NewObjectArray(len, jlStringClass, nullptr);
+  if (names_obj == nullptr && env->ExceptionOccurred()) {
+    return nullptr;  // async exception!
   }
 
   for (size_t ii = 0; ii < len; ++ii) {
     jstring s = NewStringLatin1(env, entries[ii].c_str());
-    if (s == NULL && env->ExceptionOccurred()) {
-      return NULL;  // async exception!
+    if (s == nullptr && env->ExceptionOccurred()) {
+      return nullptr;  // async exception!
     }
     env->SetObjectArrayElement(names_obj, ii, s);
   }
 
-  jbyteArray types_obj = NULL;
+  jbyteArray types_obj = nullptr;
   if (read_types != 'n') {
     CHECK(len == types.size());
     types_obj = env->NewByteArray(len);
@@ -707,7 +706,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_remove(JNIEnv *env,
                                                    jclass clazz,
                                                    jstring path) {
   const char *path_chars = GetStringLatin1Chars(env, path);
-  if (path_chars == NULL) {
+  if (path_chars == nullptr) {
     return false;
   }
   bool ok = remove(path_chars) != -1;
@@ -738,6 +737,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_mkfifo(JNIEnv *env,
   ReleaseStringLatin1Chars(path_chars);
 }
 
+namespace {
 // Posts an exception generated by the DeleteTreesBelow algorithm and its helper
 // functions.
 //
@@ -760,7 +760,7 @@ static void PostDeleteTreesBelowException(
       path += "/";
       path += *iter;
     }
-    if (entry != NULL) {
+    if (entry != nullptr) {
       path += "/";
       path += entry;
     }
@@ -796,25 +796,25 @@ static DIR* ForceOpendir(JNIEnv* env, const std::vector<std::string>& dir_path,
     // recursion).
     if (errno == EACCES && dir_fd != AT_FDCWD) {
       if (fchmod(dir_fd, 0700) == -1) {
-        PostDeleteTreesBelowException(env, errno, "fchmod", dir_path, NULL);
-        return NULL;
+        PostDeleteTreesBelowException(env, errno, "fchmod", dir_path, nullptr);
+        return nullptr;
       }
     }
     if (fchmodat(dir_fd, entry, 0700, 0) == -1) {
       PostDeleteTreesBelowException(env, errno, "fchmodat", dir_path, entry);
-      return NULL;
+      return nullptr;
     }
     fd = openat(dir_fd, entry, flags);
     if (fd == -1) {
       PostDeleteTreesBelowException(env, errno, "opendir", dir_path, entry);
-      return NULL;
+      return nullptr;
     }
   }
   DIR* dir = fdopendir(fd);
-  if (dir == NULL) {
+  if (dir == nullptr) {
     PostDeleteTreesBelowException(env, errno, "fdopendir", dir_path, entry);
     close(fd);
-    return NULL;
+    return nullptr;
   }
   return dir;
 }
@@ -836,7 +836,7 @@ static int ForceDelete(JNIEnv* env, const std::vector<std::string>& dir_path,
   const int flags = is_dir ? AT_REMOVEDIR : 0;
   if (unlinkat(dir_fd, entry, flags) == -1) {
     if (fchmod(dir_fd, 0700) == -1) {
-      PostDeleteTreesBelowException(env, errno, "fchmod", dir_path, NULL);
+      PostDeleteTreesBelowException(env, errno, "fchmod", dir_path, nullptr);
       return -1;
     }
     if (unlinkat(dir_fd, entry, flags) == -1) {
@@ -901,18 +901,26 @@ static int IsSubdir(JNIEnv* env, const std::vector<std::string>& dir_path,
 static int DeleteTreesBelow(JNIEnv* env, std::vector<std::string>* dir_path,
                             const int dir_fd, const char* entry) {
   DIR *dir = ForceOpendir(env, *dir_path, dir_fd, entry);
-  if (dir == NULL) {
-    CHECK(env->ExceptionOccurred() != NULL);
+  if (dir == nullptr) {
+    CHECK(env->ExceptionOccurred() != nullptr);
     return -1;
   }
 
   dir_path->push_back(entry);
+  // On macOS and some other non-Linux OSes, on some filesystems, readdir(dir)
+  // may return NULL after an entry in dir is deleted even if not all files have
+  // been read yet - see https://support.apple.com/kb/TA21420; we thus read all
+  // the names of dir's entries before deleting. We don't want to simply use
+  // fts(3) because we want to be able to chmod at any point in the directory
+  // hierarchy to retry a filesystem operation after hitting an EACCES.
+  std::vector<std::string> dir_files, dir_subdirs;
   for (;;) {
     errno = 0;
     struct dirent* de = readdir(dir);
-    if (de == NULL) {
+    if (de == nullptr) {
       if (errno != 0) {
-        PostDeleteTreesBelowException(env, errno, "readdir", *dir_path, NULL);
+        PostDeleteTreesBelowException(env, errno, "readdir", *dir_path,
+                                      nullptr);
       }
       break;
     }
@@ -923,31 +931,48 @@ static int DeleteTreesBelow(JNIEnv* env, std::vector<std::string>* dir_path,
 
     bool is_dir;
     if (IsSubdir(env, *dir_path, dirfd(dir), de, &is_dir) == -1) {
-      CHECK(env->ExceptionOccurred() != NULL);
+      CHECK(env->ExceptionOccurred() != nullptr);
       break;
     }
     if (is_dir) {
-      if (DeleteTreesBelow(env, dir_path, dirfd(dir), de->d_name) == -1) {
-        CHECK(env->ExceptionOccurred() != NULL);
+      dir_subdirs.push_back(de->d_name);
+    } else {
+      dir_files.push_back(de->d_name);
+    }
+  }
+  if (env->ExceptionOccurred() == nullptr) {
+    for (const auto &file : dir_files) {
+      if (ForceDelete(env, *dir_path, dirfd(dir), file.c_str(), false) == -1) {
+        CHECK(env->ExceptionOccurred() != nullptr);
         break;
       }
     }
-
-    if (ForceDelete(env, *dir_path, dirfd(dir), de->d_name, is_dir) == -1) {
-      CHECK(env->ExceptionOccurred() != NULL);
-      break;
+    // DeleteTreesBelow is recursive; don't hold on to file names unnecessarily.
+    dir_files.clear();
+  }
+  if (env->ExceptionOccurred() == nullptr) {
+    for (const auto &subdir : dir_subdirs) {
+      if (DeleteTreesBelow(env, dir_path, dirfd(dir), subdir.c_str()) == -1) {
+        CHECK(env->ExceptionOccurred() != nullptr);
+        break;
+      }
+      if (ForceDelete(env, *dir_path, dirfd(dir), subdir.c_str(), true) == -1) {
+        CHECK(env->ExceptionOccurred() != nullptr);
+        break;
+      }
     }
   }
   if (closedir(dir) == -1) {
     // Prefer reporting the error encountered while processing entries,
     // not the (unlikely) error on close.
-    if (env->ExceptionOccurred() == NULL) {
-      PostDeleteTreesBelowException(env, errno, "closedir", *dir_path, NULL);
+    if (env->ExceptionOccurred() == nullptr) {
+      PostDeleteTreesBelowException(env, errno, "closedir", *dir_path, nullptr);
     }
   }
   dir_path->pop_back();
-  return env->ExceptionOccurred() == NULL ? 0 : -1;
+  return env->ExceptionOccurred() == nullptr ? 0 : -1;
 }
+}  // namespace
 
 /*
  * Class:     com.google.devtools.build.lib.unix.NativePosixFiles
@@ -961,7 +986,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_deleteTreesBelow(
   const char *path_chars = GetStringLatin1Chars(env, path);
   std::vector<std::string> dir_path;
   if (DeleteTreesBelow(env, &dir_path, AT_FDCWD, path_chars) == -1) {
-    CHECK(env->ExceptionOccurred() != NULL);
+    CHECK(env->ExceptionOccurred() != nullptr);
   }
   CHECK(dir_path.empty());
   ReleaseStringLatin1Chars(path_chars);
@@ -970,6 +995,7 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_deleteTreesBelow(
 ////////////////////////////////////////////////////////////////////////
 // Linux extended file attributes
 
+namespace {
 typedef ssize_t getxattr_func(const char *path, const char *name,
                               void *value, size_t size, bool *attr_not_found);
 
@@ -982,7 +1008,7 @@ static jbyteArray getxattr_common(JNIEnv *env,
 
   // TODO(bazel-team): on ERANGE, try again with larger buffer.
   jbyte value[4096];
-  jbyteArray result = NULL;
+  jbyteArray result = nullptr;
   bool attr_not_found = false;
   ssize_t size = getxattr(path_chars, name_chars, value, arraysize(value),
                           &attr_not_found);
@@ -992,12 +1018,17 @@ static jbyteArray getxattr_common(JNIEnv *env,
     }
   } else {
     result = env->NewByteArray(size);
-    env->SetByteArrayRegion(result, 0, size, value);
+    // Result may be NULL if allocation failed. In that case, we'll return the
+    // NULL and an OOME will be thrown when we are back in Java.
+    if (result != nullptr) {
+      env->SetByteArrayRegion(result, 0, size, value);
+    }
   }
   ReleaseStringLatin1Chars(path_chars);
   ReleaseStringLatin1Chars(name_chars);
   return result;
 }
+}  // namespace
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_google_devtools_build_lib_unix_NativePosixFiles_getxattr(JNIEnv *env,

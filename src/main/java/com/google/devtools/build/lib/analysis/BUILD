@@ -188,7 +188,6 @@ java_library(
         "DependencyResolver.java",
         "EmptyConfiguredTarget.java",
         "EventHandlingErrorReporter.java",
-        "ExecGroupCollection.java",
         "Expander.java",
         "ExtraActionUtils.java",
         "ExtraActionsVisitor.java",
@@ -293,6 +292,7 @@ java_library(
         ":buildinfo/build_info_key",
         ":config/build_configuration",
         ":config/build_options",
+        ":config/config_conditions",
         ":config/config_matching_provider",
         ":config/core_options",
         ":config/execution_transition_factory",
@@ -325,6 +325,7 @@ java_library(
         ":dependency_key",
         ":dependency_kind",
         ":duplicate_exception",
+        ":exec_group_collection",
         ":extra/extra_action_info_file_write_action",
         ":extra_action_artifacts_provider",
         ":file_provider",
@@ -348,7 +349,9 @@ java_library(
         ":starlark/function_transition_util",
         ":starlark/starlark_api_provider",
         ":starlark/starlark_command_line",
+        ":starlark/starlark_exec_group_collection",
         ":starlark/starlark_late_bound_default",
+        ":starlark/starlark_toolchain_context",
         ":template_variable_info",
         ":test/analysis_failure",
         ":test/analysis_failure_info",
@@ -401,6 +404,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/exec:test_xml_output_parser_exception",
         "//src/main/java/com/google/devtools/build/lib/graph",
         "//src/main/java/com/google/devtools/build/lib/packages",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
         "//src/main/java/com/google/devtools/build/lib/packages/semantics",
         "//src/main/java/com/google/devtools/build/lib/profiler",
         "//src/main/java/com/google/devtools/build/lib/profiler:google-auto-profiler-utils",
@@ -416,7 +420,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/skyframe:configured_value_creation_exception",
         "//src/main/java/com/google/devtools/build/lib/skyframe:package_value",
         "//src/main/java/com/google/devtools/build/lib/skyframe:precomputed_value",
-        "//src/main/java/com/google/devtools/build/lib/skyframe:sane_analysis_exception",
         "//src/main/java/com/google/devtools/build/lib/skyframe:toolchain_context_key",
         "//src/main/java/com/google/devtools/build/lib/skyframe:transitive_target_key",
         "//src/main/java/com/google/devtools/build/lib/skyframe:transitive_target_value",
@@ -696,6 +699,7 @@ java_library(
     name = "configured_target",
     srcs = ["ConfiguredTarget.java"],
     deps = [
+        ":config/config_matching_provider",
         ":transitive_info_collection",
         "//src/main/java/com/google/devtools/build/lib/actions:artifacts",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
@@ -743,6 +747,7 @@ java_library(
     deps = [
         "toolchain_collection",
         "//src/main/java/com/google/devtools/build/lib/packages",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
         "//third_party:auto_value",
         "//third_party:guava",
         "//third_party:jsr305",
@@ -752,6 +757,23 @@ java_library(
 java_library(
     name = "duplicate_exception",
     srcs = ["DuplicateException.java"],
+)
+
+java_library(
+    name = "exec_group_collection",
+    srcs = ["ExecGroupCollection.java"],
+    deps = [
+        ":resolved_toolchain_context",
+        ":toolchain_collection",
+        "//src/main/java/com/google/devtools/build/lib/analysis/platform",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
+        "//src/main/java/com/google/devtools/build/lib/skyframe:sane_analysis_exception",
+        "//src/main/java/com/google/devtools/build/lib/util:detailed_exit_code",
+        "//src/main/protobuf:failure_details_java_proto",
+        "//third_party:auto_value",
+        "//third_party:guava",
+        "//third_party:jsr305",
+    ],
 )
 
 java_library(
@@ -784,8 +806,10 @@ java_library(
     srcs = ["IncompatiblePlatformProvider.java"],
     deps = [
         ":configured_target",
-        ":transitive_info_provider",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
+        "//src/main/java/com/google/devtools/build/lib/concurrent",
+        "//src/main/java/com/google/devtools/build/lib/packages",
+        "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi/platform",
         "//third_party:auto_value",
         "//third_party:guava",
         "//third_party:jsr305",
@@ -986,8 +1010,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/skyframe:toolchain_context_key",
         "//src/main/java/com/google/devtools/build/lib/skyframe:toolchain_exception",
         "//src/main/java/com/google/devtools/build/lib/skyframe:unloaded_toolchain_context",
-        "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi/platform",
-        "//src/main/java/net/starlark/java/eval",
         "//src/main/protobuf:failure_details_java_proto",
         "//third_party:auto_value",
         "//third_party:guava",
@@ -1063,6 +1085,7 @@ java_library(
         ":toolchain_context",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
         "//third_party:auto_value",
         "//third_party:guava",
     ],
@@ -1193,6 +1216,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions:artifacts",
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
         "//src/main/java/com/google/devtools/build/lib/shell",
+        "//src/main/java/com/google/devtools/build/lib/skyframe:workspace_info",
         "//src/main/java/com/google/devtools/build/lib/util",
         "//src/main/java/com/google/devtools/build/lib/util:detailed_exit_code",
         "//src/main/java/com/google/devtools/build/lib/vfs",
@@ -1200,6 +1224,7 @@ java_library(
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:failure_details_java_proto",
         "//third_party:guava",
+        "//third_party:jsr305",
     ],
 )
 
@@ -1596,6 +1621,20 @@ java_library(
 )
 
 java_library(
+    name = "config/config_conditions",
+    srcs = ["config/ConfigConditions.java"],
+    deps = [
+        ":config/config_matching_provider",
+        ":configured_target",
+        "//src/main/java/com/google/devtools/build/lib/analysis/platform",
+        "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/skyframe:configured_target_and_data",
+        "//third_party:auto_value",
+        "//third_party:guava",
+    ],
+)
+
+java_library(
     name = "config/core_option_converters",
     srcs = ["config/CoreOptionConverters.java"],
     deps = [
@@ -1646,10 +1685,10 @@ java_library(
         ":config/transitions/patch_transition",
         ":config/transitions/transition_factory",
         ":platform_options",
-        ":toolchain_collection",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/events",
         "//src/main/java/com/google/devtools/build/lib/packages",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
         "//src/main/java/com/google/devtools/build/lib/rules/config:feature_flag_value",
         "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi",
         "//third_party:guava",
@@ -2141,6 +2180,22 @@ java_library(
 )
 
 java_library(
+    name = "starlark/starlark_exec_group_collection",
+    srcs = ["starlark/StarlarkExecGroupCollection.java"],
+    deps = [
+        ":resolved_toolchain_context",
+        ":starlark/starlark_toolchain_context",
+        ":toolchain_collection",
+        "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
+        "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi/platform",
+        "//src/main/java/net/starlark/java/eval",
+        "//src/main/java/net/starlark/java/syntax",
+        "//third_party:auto_value",
+        "//third_party:guava",
+    ],
+)
+
+java_library(
     name = "starlark/starlark_error_reporter",
     srcs = ["starlark/StarlarkErrorReporter.java"],
     deps = [
@@ -2174,6 +2229,20 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/packages",
         "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi",
         "//src/main/java/net/starlark/java/eval",
+    ],
+)
+
+java_library(
+    name = "starlark/starlark_toolchain_context",
+    srcs = ["starlark/StarlarkToolchainContext.java"],
+    deps = [
+        ":resolved_toolchain_context",
+        "//src/main/java/com/google/devtools/build/lib/analysis/platform",
+        "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi/platform",
+        "//src/main/java/net/starlark/java/eval",
+        "//third_party:auto_value",
+        "//third_party:jsr305",
     ],
 )
 

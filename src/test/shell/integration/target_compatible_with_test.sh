@@ -81,6 +81,8 @@ EOF
 # We're not validating visibility here. Let everything access these targets.
 package(default_visibility = ["//visibility:public"])
 
+# TODO(philsc): Get rid of this and use @platforms//:incompatible instead.
+# Right now it's problematic because Google CI doesn't support @platforms.
 constraint_setting(name = "not_compatible_setting")
 
 constraint_value(
@@ -190,6 +192,36 @@ function tear_down() {
   bazel shutdown
 }
 
+# Validates that we get a good error message when passing a config_setting into
+# the target_compatible_with attribute. This is a regression test for
+# https://github.com/bazelbuild/bazel/issues/13250.
+function test_config_setting_in_target_compatible_with() {
+  cat >> target_skipping/BUILD <<EOF
+config_setting(
+    name = "foo3_config_setting",
+    constraint_values = [":foo3"],
+)
+
+sh_binary(
+    name = "problematic_foo3_target",
+    srcs = ["pass.sh"],
+    target_compatible_with = [
+        ":foo3_config_setting",
+    ],
+)
+EOF
+
+  cd target_skipping || fail "couldn't cd into workspace"
+
+  bazel build \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo3_platform \
+    --platforms=@//target_skipping:foo3_platform \
+    ... &> "${TEST_log}" && fail "Bazel succeeded unexpectedly."
+
+  expect_log "'//target_skipping:foo3_config_setting' does not have mandatory providers: 'ConstraintValueInfo'"
+}
+
 # Validates that the console log provides useful information to the user for
 # builds.
 function test_console_log_for_builds() {
@@ -250,6 +282,51 @@ function test_console_log_for_tests() {
   expect_log '^//target_skipping:pass_on_foo1  *  PASSED in'
   expect_log '^//target_skipping:fail_on_foo2  *  SKIPPED$'
   expect_log '^//target_skipping:pass_on_foo1_bar2  *  PASSED in'
+}
+
+# Validates that filegroups (i.e. a rule that doesn't use toolchain resolution)
+# is correctly skipped when it depends on an incompatible target. This is a
+# regression test for https://github.com/bazelbuild/bazel/issues/12582.
+function test_filegroup() {
+  cat > target_skipping/binary.cc <<EOF
+#include <cstdio>
+int main() {
+  return 0;
+}
+EOF
+
+  cat >> target_skipping/BUILD <<EOF
+cc_binary(
+    name = "binary",
+    srcs = ["binary.cc"],
+    target_compatible_with = [
+        ":foo3",
+    ],
+)
+
+filegroup(
+    name = "filegroup",
+    srcs = [
+        ":binary",
+    ],
+)
+EOF
+
+  cd target_skipping || fail "couldn't cd into workspace"
+
+  bazel build \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo1_bar1_platform \
+    --platforms=@//target_skipping:foo1_bar1_platform \
+    :all &> "${TEST_log}" || fail "Bazel failed unexpectedly."
+  expect_log 'Target //target_skipping:filegroup was skipped'
+
+  bazel build \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo1_bar1_platform \
+    --platforms=@//target_skipping:foo1_bar1_platform \
+    :filegroup &> "${TEST_log}" && fail "Bazel passed unexpectedly."
+  expect_log 'Target //target_skipping:filegroup is incompatible and cannot be built'
 }
 
 # Validates that incompatible target skipping errors behave nicely with
@@ -323,7 +400,10 @@ function atest_build_event_protocol() {
 # incompatible targets are themselves deemed incompatible and should therefore
 # not be built.
 function test_non_top_level_skipping() {
-  cat >> target_skipping/BUILD <<EOF
+  touch target_skipping/foo_test.sh
+  chmod +x target_skipping/foo_test.sh
+
+  cat >> target_skipping/BUILD <<'EOF'
 genrule(
     name = "genrule_foo1",
     target_compatible_with = [":foo1"],
@@ -336,6 +416,15 @@ sh_binary(
     srcs = ["foo1.sh"],
     target_compatible_with = [":foo2"],
 )
+
+# Make sure that using an incompatible target in Make variable substitution
+# doesn't produce an unexpected error.
+sh_test(
+    name = "foo_test",
+    srcs = ["foo_test.sh"],
+    data = [":some_foo3_target"],
+    args = ["$(location :some_foo3_target)"],
+)
 EOF
 
   cd target_skipping || fail "couldn't cd into workspace"
@@ -346,6 +435,14 @@ EOF
     --platforms=@//target_skipping:foo2_bar1_platform \
     //target_skipping:sh_foo2 &> "${TEST_log}" && fail "Bazel passed unexpectedly."
   expect_log 'ERROR: Target //target_skipping:sh_foo2 is incompatible and cannot be built, but was explicitly requested'
+  expect_log 'FAILED: Build did NOT complete successfully'
+
+  bazel build \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo2_bar1_platform \
+    --platforms=@//target_skipping:foo2_bar1_platform \
+    //target_skipping:foo_test &> "${TEST_log}" && fail "Bazel passed unexpectedly."
+  expect_log 'ERROR: Target //target_skipping:foo_test is incompatible and cannot be built, but was explicitly requested'
   expect_log 'FAILED: Build did NOT complete successfully'
 }
 
@@ -402,6 +499,92 @@ EOF
   expect_log 'FAILED: Build did NOT complete successfully'
 }
 
+# Validates that rules with custom providers are skipped when incompatible.
+# This is valuable because we use providers to convey incompatibility.
+function test_dependencies_with_providers() {
+  cat > target_skipping/rules.bzl <<EOF
+DummyProvider = provider()
+
+def _dummy_rule_impl(ctx):
+    return [DummyProvider()]
+
+dummy_rule = rule(
+    implementation = _dummy_rule_impl,
+    attrs = {
+        "deps": attr.label_list(providers=[DummyProvider]),
+    },
+)
+EOF
+
+  cat >> target_skipping/BUILD <<EOF
+load("//target_skipping:rules.bzl", "dummy_rule")
+
+dummy_rule(
+    name = "dummy1",
+    target_compatible_with = [
+        "//target_skipping:foo1",
+    ],
+)
+
+dummy_rule(
+    name = "dummy2",
+    deps = [
+        ":dummy1",
+    ],
+)
+EOF
+
+  cd target_skipping || fail "couldn't cd into workspace"
+
+  pwd >&2
+  bazel build \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo3_platform \
+    --platforms=@//target_skipping:foo3_platform \
+    //target_skipping/... &> "${TEST_log}" || fail "Bazel failed unexpectedly."
+  expect_log '^Target //target_skipping:dummy2 was skipped'
+}
+
+function test_dependencies_with_extensions() {
+  cat > target_skipping/rules.bzl <<EOF
+def _dummy_rule_impl(ctx):
+    out = ctx.actions.declare_file(ctx.attr.name + ".cc")
+    ctx.actions.write(out, "Dummy content")
+    return DefaultInfo(files = depset([out]))
+
+dummy_rule = rule(
+    implementation = _dummy_rule_impl,
+)
+EOF
+
+  cat >> target_skipping/BUILD <<EOF
+load("//target_skipping:rules.bzl", "dummy_rule")
+
+# Generates a dummy.cc file.
+dummy_rule(
+    name = "dummy_file",
+    target_compatible_with = [":foo1"],
+)
+
+cc_library(
+    name = "dummy_cc_lib",
+    srcs = [
+        "dummy_file",
+    ],
+)
+EOF
+
+  cd target_skipping || fail "couldn't cd into workspace"
+
+  pwd >&2
+  bazel build \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo3_platform \
+    --platforms=@//target_skipping:foo3_platform \
+    //target_skipping/... &> "${TEST_log}" || fail "Bazel failed unexpectedly."
+  expect_log '^Target //target_skipping:dummy_cc_lib was skipped'
+}
+
 # Validates the same thing as test_non_top_level_skipping, but with a cc_test
 # and adding one more level of dependencies.
 function test_cc_test() {
@@ -435,6 +618,21 @@ EOF
 
   cd target_skipping || fail "couldn't cd into workspace"
 
+  # Validate the generated file that makes up the test.
+  bazel test \
+    --show_result=10 \
+    --host_platform=@//target_skipping:foo2_bar1_platform \
+    --platforms=@//target_skipping:foo2_bar1_platform \
+    //target_skipping:generated_test.cc &> "${TEST_log}" && fail "Bazel passed unexpectedly."
+  expect_log "ERROR: Target //target_skipping:generated_test.cc is incompatible and cannot be built, but was explicitly requested"
+
+  # Validate that we get the dependency chain printed out.
+  expect_log '^Dependency chain:$'
+  expect_log '^    //target_skipping:generate_with_tool$'
+  expect_log "^    //target_skipping:generator_tool   <-- target platform didn't satisfy constraint //target_skipping:foo1"
+  expect_log 'FAILED: Build did NOT complete successfully'
+
+  # Validate the test.
   bazel test \
     --show_result=10 \
     --host_platform=@//target_skipping:foo2_bar1_platform \
@@ -446,7 +644,7 @@ EOF
   expect_log '^Dependency chain:$'
   expect_log '^    //target_skipping:generated_test$'
   expect_log '^    //target_skipping:generate_with_tool$'
-  expect_log "^    //target_skipping:generator_tool   <-- target platform didn't satisfy constraint //target_skipping:foo1$"
+  expect_log "^    //target_skipping:generator_tool   <-- target platform didn't satisfy constraint //target_skipping:foo1"
   expect_log 'FAILED: Build did NOT complete successfully'
 }
 
@@ -494,7 +692,7 @@ EOF
   expect_log '^Dependency chain:$'
   expect_log '^    //target_skipping:generated_test$'
   expect_log '^    //target_skipping:generate_with_tool$'
-  expect_log "^    //target_skipping:generator_tool   <-- target platform didn't satisfy constraints \[//target_skipping:foo1, //target_skipping:bar2\]$"
+  expect_log "^    //target_skipping:generator_tool   <-- target platform didn't satisfy constraints \[//target_skipping:foo1, //target_skipping:bar2\]"
   expect_log 'FAILED: Build did NOT complete successfully'
 }
 
@@ -650,7 +848,7 @@ EOF
 
   # Make sure that the contents of the file are what we expect.
   cp ../${PRODUCT_NAME}-bin/target_skipping/host_tool_message.txt "${TEST_log}"
-  expect_log '^Hello World$'
+  expect_log 'Hello World'
 }
 
 # Validates that we successfully skip analysistest rule targets when they
@@ -682,7 +880,6 @@ EOF
 
   bazel test --show_result=10  \
     --host_platform=@//target_skipping:foo3_platform \
-    --toolchain_resolution_debug \
     --platforms=@//target_skipping:foo3_platform \
     //target_skipping:foo3_analysistest_test &> "${TEST_log}" \
     || fail "Bazel failed unexpectedly."
@@ -719,8 +916,8 @@ function test_query() {
   bazel query \
     'deps(//target_skipping:sh_foo1)' &> "${TEST_log}" \
     || fail "Bazel query failed unexpectedly."
-  expect_log '^//target_skipping:sh_foo1$'
-  expect_log '^//target_skipping:genrule_foo1$'
+  expect_log '^//target_skipping:sh_foo1'
+  expect_log '^//target_skipping:genrule_foo1'
 }
 
 # Run a cquery on a target that is compatible. This should pass.
@@ -763,6 +960,44 @@ function test_cquery_incompatible_target() {
     && fail "Bazel cquery passed unexpectedly."
   expect_log 'Target //target_skipping:sh_foo1 is incompatible and cannot be built, but was explicitly requested'
   expect_log "target platform didn't satisfy constraint //target_skipping:foo1"
+}
+
+# Runs a cquery and makes sure that we can properly distinguish between
+# incompatible targets and compatible targets.
+function test_cquery_with_starlark_formatting() {
+  cat > target_skipping/compatibility.cquery <<EOF
+def format(target):
+    if "IncompatiblePlatformProvider" in providers(target):
+        result = "incompatible"
+    else:
+        result = "compatible"
+
+    return "%s is %s" % (target.label, result)
+EOF
+
+  cd target_skipping || fail "couldn't cd into workspace"
+
+  bazel cquery \
+    --host_platform=//target_skipping:foo1_bar1_platform \
+    --platforms=//target_skipping:foo1_bar1_platform \
+    :all \
+    --output=starlark --starlark:file=target_skipping/compatibility.cquery \
+    &> "${TEST_log}"
+
+  expect_log '^//target_skipping:pass_on_foo1 is compatible$'
+  expect_log '^//target_skipping:fail_on_foo2 is incompatible$'
+  expect_log '^//target_skipping:some_foo3_target is incompatible$'
+
+  bazel cquery \
+    --host_platform=//target_skipping:foo3_platform \
+    --platforms=//target_skipping:foo3_platform \
+    :all \
+    --output=starlark --starlark:file=target_skipping/compatibility.cquery \
+    &> "${TEST_log}"
+
+  expect_log '^//target_skipping:pass_on_foo1 is incompatible$'
+  expect_log '^//target_skipping:fail_on_foo2 is incompatible$'
+  expect_log '^//target_skipping:some_foo3_target is compatible$'
 }
 
 # Run an aquery on a target that is compatible. This should pass.

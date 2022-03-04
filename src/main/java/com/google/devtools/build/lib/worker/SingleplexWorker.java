@@ -93,6 +93,11 @@ class SingleplexWorker extends Worker {
   }
 
   @Override
+  public boolean isSandboxed() {
+    return false;
+  }
+
+  @Override
   public void prepareExecution(
       SandboxInputs inputFiles, SandboxOutputs outputs, Set<PathFragment> workerFiles)
       throws IOException {
@@ -118,13 +123,21 @@ class SingleplexWorker extends Worker {
   }
 
   @Override
-  WorkResponse getResponse(int requestId) throws IOException {
+  WorkResponse getResponse(int requestId) throws IOException, InterruptedException {
     recordingInputStream.startRecording(4096);
+    while (recordingInputStream.available() == 0) {
+      Thread.sleep(10);
+      if (!process.isAlive()) {
+        throw new IOException(
+            String.format(
+                "Worker process for %s died while waiting for response", workerKey.getMnemonic()));
+      }
+    }
     return workerProtocol.getResponse();
   }
 
   @Override
-  public void finishExecution(Path execRoot) throws IOException {}
+  public void finishExecution(Path execRoot, SandboxOutputs outputs) throws IOException {}
 
   @Override
   void destroy() {
@@ -162,5 +175,10 @@ class SingleplexWorker extends Worker {
   String getRecordingStreamMessage() {
     recordingInputStream.readRemaining();
     return recordingInputStream.getRecordedDataAsString();
+  }
+
+  @Override
+  public String toString() {
+    return workerKey.getMnemonic() + " worker #" + workerId;
   }
 }

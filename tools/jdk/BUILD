@@ -276,6 +276,11 @@ remote_java_tools_java_import(
     target = ":java_tools/JacocoCoverage_jarjar_deploy.jar",
 )
 
+remote_java_tools_filegroup(
+    name = "JacocoCoverageFilegroup",
+    target = ":java_tools/JacocoCoverage_jarjar_deploy.jar",
+)
+
 remote_java_tools_java_import(
     name = "TestRunner",
     target = ":java_tools/Runner_deploy.jar",
@@ -486,7 +491,8 @@ alias(
     name = "remote_jdk11",
     actual = select(
         {
-            "//src/conditions:darwin": "@remotejdk11_macos//:jdk",
+            "//src/conditions:darwin_x86_64": "@remotejdk11_macos//:jdk",
+            "//src/conditions:darwin_arm64": "@remotejdk11_macos_aarch64//:jdk",
             "//src/conditions:windows": "@remotejdk11_win//:jdk",
             "//src/conditions:linux_aarch64": "@remotejdk11_linux_aarch64//:jdk",
             "//src/conditions:linux_x86_64": "@remotejdk11_linux//:jdk",

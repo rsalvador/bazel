@@ -36,6 +36,7 @@ import com.google.devtools.build.lib.bazel.repository.downloader.DelegatingDownl
 import com.google.devtools.build.lib.bazel.repository.downloader.DownloadManager;
 import com.google.devtools.build.lib.bazel.repository.downloader.HttpDownloader;
 import com.google.devtools.build.lib.bazel.repository.downloader.UrlRewriter;
+import com.google.devtools.build.lib.bazel.repository.downloader.UrlRewriterParseException;
 import com.google.devtools.build.lib.bazel.repository.starlark.StarlarkRepositoryFunction;
 import com.google.devtools.build.lib.bazel.repository.starlark.StarlarkRepositoryModule;
 import com.google.devtools.build.lib.bazel.rules.android.AndroidNdkRepositoryFunction;
@@ -225,7 +226,7 @@ public class BazelRepositoryModule extends BlazeModule {
   }
 
   @Override
-  public void beforeCommand(CommandEnvironment env) {
+  public void beforeCommand(CommandEnvironment env) throws AbruptExitException {
     clientEnvironmentSupplier.set(env.getRepoEnv());
     PackageOptions pkgOptions = env.getOptions().getOptions(PackageOptions.class);
     isFetch.set(pkgOptions != null && pkgOptions.fetch);
@@ -237,6 +238,8 @@ public class BazelRepositoryModule extends BlazeModule {
 
     RepositoryOptions repoOptions = env.getOptions().getOptions(RepositoryOptions.class);
     if (repoOptions != null) {
+      downloadManager.setDisableDownload(repoOptions.disableDownload);
+
       repositoryCache.setHardlink(repoOptions.useHardlinks);
       if (repoOptions.experimentalScaleTimeouts > 0.0) {
         starlarkRepositoryFunction.setTimeoutScaling(repoOptions.experimentalScaleTimeouts);
@@ -282,10 +285,20 @@ public class BazelRepositoryModule extends BlazeModule {
         }
       }
 
-      UrlRewriter rewriter =
-          UrlRewriter.getDownloaderUrlRewriter(
-              repoOptions == null ? null : repoOptions.downloaderConfig, env.getReporter());
-      downloadManager.setUrlRewriter(rewriter);
+      try {
+        UrlRewriter rewriter =
+            UrlRewriter.getDownloaderUrlRewriter(
+                repoOptions == null ? null : repoOptions.downloaderConfig, env.getReporter());
+        downloadManager.setUrlRewriter(rewriter);
+      } catch (UrlRewriterParseException e) {
+        // It's important that the build stops ASAP, because this config file may be required for
+        // security purposes, and the build must not proceed ignoring it.
+        throw new AbruptExitException(
+            detailedExitCode(
+                String.format(
+                    "Failed to parse downloader config at %s: %s", e.getLocation(), e.getMessage()),
+                Code.BAD_DOWNLOADER_CONFIG));
+      }
 
       if (repoOptions.experimentalDistdir != null) {
         downloadManager.setDistdir(

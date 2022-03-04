@@ -16,6 +16,7 @@ md5_cmd = "set -e -o pipefail && %s $(SRCS) | %s | %s > $@"
         "//src/main/java/net/starlark/java/eval:cpu_profiler",
         # TODO(brandjon): ensure we haven't forgotten any package-zip items,
         # otherwise bazel won't correctly reextract modified files.
+        ":platforms_archive",
         "//src/main/cpp:client",
         "//src/main/tools:build-runfiles",
         "//src/main/tools:process-wrapper",
@@ -175,8 +176,11 @@ rule_size_test(
 filegroup(
     name = "embedded_jdk_allmodules_cached",
     srcs = select({
-        "//src/conditions:darwin": [
-            "@openjdk_macos//file",
+        "//src/conditions:darwin_x86_64": [
+            "@openjdk_macos_x86_64//file",
+        ],
+        "//src/conditions:darwin_arm64": [
+            "@openjdk_macos_aarch64//file",
         ],
         "//src/conditions:windows": [
             "@openjdk_win//file",
@@ -194,8 +198,11 @@ filegroup(
 filegroup(
     name = "embedded_jdk_minimal_cached",
     srcs = select({
-        "//src/conditions:darwin": [
-            "@openjdk_macos_minimal//file",
+        "//src/conditions:darwin_x86_64": [
+            "@openjdk_macos_x86_64_minimal//file",
+        ],
+        "//src/conditions:darwin_arm64": [
+            "@openjdk_macos_aarch64_minimal//file",
         ],
         "//src/conditions:windows": [
             "@openjdk_win_minimal//file",
@@ -213,8 +220,11 @@ filegroup(
 filegroup(
     name = "embedded_jdk_vanilla",
     srcs = select({
-        "//src/conditions:darwin": [
-            "@openjdk_macos_vanilla//file",
+        "//src/conditions:darwin_x86_64": [
+            "@openjdk_macos_x86_64_vanilla//file",
+        ],
+        "//src/conditions:darwin_arm64": [
+            "@openjdk_macos_aarch64_vanilla//file",
         ],
         "//src/conditions:windows": [
             "@openjdk_win_vanilla//file",
@@ -384,7 +394,7 @@ genrule(
     # In msys, a file path without .exe suffix(say foo), refers to a file with .exe
     # suffix(say foo.exe), if foo.exe exists and foo doesn't. So, on windows, we
     # need to remove bazel.exe first, so that cat to bazel won't fail.
-    cmd = "rm -f $@; cat $(location //src/main/cpp:client) $(location :package-zip" + jdk + ") > $@ && zip -qA $@",
+    cmd = "rm -f $@; cat $(location //src/main/cpp:client) $(location :package-zip" + jdk + ") > $@ && zip -qA $@ && chmod a+x $@",
     executable = 1,
     output_to_bindir = 1,
     visibility = [
@@ -749,18 +759,21 @@ filegroup(
         "@bazel_skylib//:WORKSPACE",
         "@bazel_toolchains//:WORKSPACE",
         "@com_google_protobuf//:WORKSPACE",
+        "@openjdk11_darwin_aarch64_archive//:WORKSPACE",
         "@openjdk11_darwin_archive//:WORKSPACE",
         "@openjdk11_linux_archive//:WORKSPACE",
         "@openjdk11_windows_archive//:WORKSPACE",
         "@openjdk14_darwin_archive//:WORKSPACE",
         "@openjdk14_linux_archive//:WORKSPACE",
         "@openjdk14_windows_archive//:WORKSPACE",
+        "@openjdk15_darwin_aarch64_archive//:WORKSPACE",
         "@openjdk15_darwin_archive//:WORKSPACE",
         "@openjdk15_linux_archive//:WORKSPACE",
         "@openjdk15_windows_archive//:WORKSPACE",
         "@openjdk_linux_aarch64_minimal//file",
         "@openjdk_linux_minimal//file",
-        "@openjdk_macos_minimal//file",
+        "@openjdk_macos_x86_64_minimal//file",
+        "@openjdk_macos_aarch64_minimal//file",
         "@openjdk_win_minimal//file",
         "@remote_coverage_tools_for_testing//:WORKSPACE",
         "@remote_java_tools_darwin_for_testing//:WORKSPACE",
@@ -773,12 +786,14 @@ filegroup(
         "@remotejdk11_linux_for_testing//:WORKSPACE",
         "@remotejdk11_linux_ppc64le_for_testing//:WORKSPACE",
         "@remotejdk11_linux_s390x_for_testing//:WORKSPACE",
+        "@remotejdk11_macos_aarch64_for_testing//:WORKSPACE",
         "@remotejdk11_macos_for_testing//:WORKSPACE",
         "@remotejdk11_win_for_testing//:WORKSPACE",
         "@remotejdk14_linux_for_testing//:WORKSPACE",
         "@remotejdk14_macos_for_testing//:WORKSPACE",
         "@remotejdk14_win_for_testing//:WORKSPACE",
         "@remotejdk15_linux_for_testing//:WORKSPACE",
+        "@remotejdk15_macos_aarch64_for_testing//:WORKSPACE",
         "@remotejdk15_macos_for_testing//:WORKSPACE",
         "@remotejdk15_win_for_testing//:WORKSPACE",
         "@rules_cc//:WORKSPACE",

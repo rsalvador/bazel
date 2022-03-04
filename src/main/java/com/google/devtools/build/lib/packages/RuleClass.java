@@ -14,10 +14,8 @@
 
 package com.google.devtools.build.lib.packages;
 
-import static com.google.devtools.build.lib.packages.Attribute.ANY_RULE;
 import static com.google.devtools.build.lib.packages.Attribute.attr;
 import static com.google.devtools.build.lib.packages.BuildType.LABEL_LIST;
-import static com.google.devtools.build.lib.packages.ExecGroup.COPY_FROM_RULE_EXEC_GROUP;
 import static com.google.devtools.build.lib.packages.Type.BOOLEAN;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -56,7 +54,6 @@ import com.google.devtools.build.lib.packages.RuleFactory.AttributeValues;
 import com.google.devtools.build.lib.packages.Type.ConversionException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
-import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.StringUtil;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -763,24 +760,7 @@ public class RuleClass {
         useToolchainTransition = parent.useToolchainTransition;
         addExecutionPlatformConstraints(parent.getExecutionPlatformConstraints());
         try {
-          ImmutableMap.Builder<String, ExecGroup> cleanedExecGroups = new ImmutableMap.Builder<>();
-          // For exec groups that copied toolchains and constraints from the rule, clear
-          // the toolchains and constraints. This prevents multiple inherited rule-copying exec
-          // groups with the same name from different parents from clashing. The toolchains and
-          // constraints will be overwritten with the rule's toolchains and constraints later
-          // anyway (see {@link #build}).
-          // For example, every rule that creates c++ linking actions inherits the rule-copying
-          // exec group "cpp_link". For rules that are the child of multiple of these rules,
-          // we need to clear out whatever toolchains and constraints have been copied from the rule
-          // in order to prevent clashing and fill with the the child's toolchain and constraints.
-          for (Map.Entry<String, ExecGroup> execGroup : parent.getExecGroups().entrySet()) {
-            if (execGroup.getValue().copyFromRule()) {
-              cleanedExecGroups.put(execGroup.getKey(), COPY_FROM_RULE_EXEC_GROUP);
-            } else {
-              cleanedExecGroups.put(execGroup);
-            }
-          }
-          addExecGroups(cleanedExecGroups.build());
+          addExecGroups(parent.getExecGroups());
         } catch (DuplicateExecGroupError e) {
           throw new IllegalArgumentException(
               String.format(
@@ -858,34 +838,12 @@ public class RuleClass {
             attr(STARLARK_BUILD_SETTING_DEFAULT_ATTR_NAME, type)
                 .nonconfigurable(BUILD_SETTING_DEFAULT_NONCONFIGURABLE)
                 .mandatory();
-        if (BuildType.isLabelType(type)) {
-          attrBuilder.allowedFileTypes(FileTypeSet.ANY_FILE);
-          attrBuilder.allowedRuleClasses(ANY_RULE);
-        }
         this.add(attrBuilder);
 
         // Build setting rules should opt out of toolchain resolution, since they form part of the
         // configuration.
         this.useToolchainResolution(false);
         this.useToolchainTransition(false);
-      }
-
-      // Any exec groups that have entirely empty toolchains and constraints inherit the rule's
-      // toolchains and constraints. Note that this isn't the same as a target's constraints which
-      // also read from attributes and configuration.
-      Map<String, ExecGroup> execGroupsWithInheritance = new HashMap<>();
-      ExecGroup copiedFromRule = null;
-      for (Map.Entry<String, ExecGroup> groupEntry : execGroups.entrySet()) {
-        ExecGroup group = groupEntry.getValue();
-        if (group.copyFromRule()) {
-          if (copiedFromRule == null) {
-            copiedFromRule =
-                ExecGroup.createCopied(requiredToolchains, executionPlatformConstraints);
-          }
-          execGroupsWithInheritance.put(groupEntry.getKey(), copiedFromRule);
-        } else {
-          execGroupsWithInheritance.put(groupEntry.getKey(), group);
-        }
       }
 
       return new RuleClass(
@@ -922,7 +880,7 @@ public class RuleClass {
           useToolchainResolution,
           useToolchainTransition,
           executionPlatformConstraints,
-          execGroupsWithInheritance,
+          execGroups,
           outputFileKind,
           attributes.values(),
           buildSetting);
@@ -1491,7 +1449,7 @@ public class RuleClass {
 
     /** Adds an exec group that copies its toolchains and constraints from the rule. */
     public Builder addExecGroup(String name) {
-      return addExecGroups(ImmutableMap.of(name, COPY_FROM_RULE_EXEC_GROUP));
+      return addExecGroups(ImmutableMap.of(name, ExecGroup.copyFromDefault()));
     }
 
     /** An error to help report {@link ExecGroup}s with the same name */

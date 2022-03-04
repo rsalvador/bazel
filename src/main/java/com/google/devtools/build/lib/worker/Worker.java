@@ -66,6 +66,9 @@ public abstract class Worker {
     return workerKey.getWorkerFilesWithHashes();
   }
 
+  /** Returns true if this worker is sandboxed. */
+  public abstract boolean isSandboxed();
+
   /**
    * Sets the reporter this {@code Worker} should report anomalous events to, or clears it. We
    * expect the reporter to be cleared at end of build.
@@ -101,7 +104,7 @@ public abstract class Worker {
   abstract WorkResponse getResponse(int requestId) throws IOException, InterruptedException;
 
   /** Does whatever cleanup may be required after execution is done. */
-  public abstract void finishExecution(Path execRoot) throws IOException;
+  public abstract void finishExecution(Path execRoot, SandboxOutputs outputs) throws IOException;
 
   /**
    * Destroys this worker. Once this has been called, we assume it's safe to clean up related
