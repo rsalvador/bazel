@@ -23,8 +23,10 @@ import com.google.devtools.build.lib.util.io.MessageOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.Set;
 
 /**
  * A Utility to sort the SpawnExec log in a way that is reproducible across nondeterministic Bazel
@@ -78,8 +80,11 @@ public final class StableSort {
       for (File s : ex.getInputsList()) {
         if (outputProducer.containsKey(s.getPath())) {
           for (SpawnExec blocker : outputProducer.get(s.getPath())) {
-            blockedBy.put(ex, blocker);
-            blocking.put(blocker, ex);
+            if (ex != blocker) {
+              // aura rule was self-blocking itself with same output/input (.registries-0-params)
+              blockedBy.put(ex, blocker);
+              blocking.put(blocker, ex);
+            }
           }
         }
       }
@@ -114,15 +119,25 @@ public final class StableSort {
       }
     }
 
+    Set<SpawnExec> written = new HashSet<>();
+
     while (!queue.isEmpty()) {
       SpawnExec curr = queue.remove();
       out.write(curr);
+      written.add(curr);
 
       for (SpawnExec blocked : blocking.get(curr)) {
         blockedBy.remove(blocked, curr);
         if (!blockedBy.containsKey(blocked)) {
           queue.add(blocked);
         }
+      }
+    }
+
+    // write any left over spawns (because of cycles?)
+    for (SpawnExec ex: inputs) {
+      if (!written.contains(ex)) {
+        out.write(ex);
       }
     }
   }
