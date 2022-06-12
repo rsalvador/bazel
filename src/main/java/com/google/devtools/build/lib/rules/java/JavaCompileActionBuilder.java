@@ -244,9 +244,9 @@ public final class JavaCompileActionBuilder {
       classpathMode = JavaClasspathMode.OFF;
     }
 
+    JavaConfiguration javaConfiguration =
+        ruleContext.getConfiguration().getFragment(JavaConfiguration.class);
     if (outputs.depsProto() != null) {
-      JavaConfiguration javaConfiguration =
-          ruleContext.getConfiguration().getFragment(JavaConfiguration.class);
       if (javaConfiguration.inmemoryJdepsFiles()) {
         executionInfo =
             ImmutableMap.<String, String>builderWithExpectedSize(this.executionInfo.size() + 1)
@@ -272,6 +272,19 @@ public final class JavaCompileActionBuilder {
             toolchain,
             stripOutputPaths ? JavaCompilationHelper.outputBase(outputs.output()) : null);
 
+    NestedSet<Artifact> transitiveInputs = classpathEntries;
+    if (javaConfiguration.javacExcludeTransitiveWorkspaceJars() && isWorkspaceJar(outputs.output())) {
+      NestedSetBuilder<Artifact> inputsBuilder = NestedSetBuilder.compileOrder();
+      ImmutableSet<Artifact> directJarsSet = directJars.toSet();
+      for (Artifact artifact: classpathEntries.toList()) {
+        // skip adding transitive workspace jars
+        if (!isWorkspaceJar(artifact) || directJarsSet.contains(artifact)) {
+          inputsBuilder.add(artifact);
+        }
+      }
+      transitiveInputs = inputsBuilder.build();
+    }
+
     return new JavaCompileAction(
         /* compilationType= */ JavaCompileAction.CompilationType.JAVAC,
         /* owner= */ ruleContext.getActionOwner(execGroup),
@@ -284,7 +297,7 @@ public final class JavaCompileActionBuilder {
             /* sourceJars= */ sourceJars,
             /* plugins= */ plugins),
         /* mandatoryInputs= */ mandatoryInputs,
-        /* transitiveInputs= */ classpathEntries,
+        /* transitiveInputs= */ transitiveInputs,
         /* directJars= */ directJars,
         /* outputs= */ allOutputs(),
         /* executionInfo= */ executionInfo,
@@ -295,6 +308,15 @@ public final class JavaCompileActionBuilder {
         /* dependencyArtifacts= */ compileTimeDependencyArtifacts,
         /* outputDepsProto= */ outputs.depsProto(),
         /* classpathMode= */ classpathMode);
+  }
+
+  /**
+   * @return True iff artifact is a jar build by the root workspace
+   */
+  private static boolean isWorkspaceJar(Artifact artifact) {
+    String execPath = artifact.getExecPathString();
+    // TODO: better implementation/criteria
+    return !(artifact.getRoot().isExternal() || execPath.contains("/bin/external/") || execPath.contains("/third_party/"));
   }
 
   private ImmutableSet<Artifact> allOutputs() {

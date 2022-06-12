@@ -210,6 +210,14 @@ public class JavaOptions extends FragmentOptions {
   public boolean inmemoryJdepsFiles;
 
   @Option(
+      name = "experimental_javac_exclude_transitive_workspace_jars",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help = "Help: do not pass transitive workspace jars to the java compile action")
+  public boolean javacExcludeTransitiveWorkspaceJars;
+
+  @Option(
       name = "java_debug",
       defaultValue = "null",
       expansion = {
