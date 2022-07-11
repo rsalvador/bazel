@@ -130,7 +130,7 @@ public class ResourceJarActionBuilder {
             .addTransitiveInputs(additionalInputs)
             .addInputs(classpathResources)
             .addCommandLine(command.build(), PARAM_FILE_INFO)
-            .setProgressMessage("Building Java resource jar")
+            .setProgressMessage("Building Java resource jar %{label}")
             .setMnemonic(MNEMONIC)
             .setExecGroup(execGroup)
             .build(ruleContext));
