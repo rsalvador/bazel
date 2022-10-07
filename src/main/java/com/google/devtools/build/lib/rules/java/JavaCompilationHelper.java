@@ -778,7 +778,9 @@ public final class JavaCompilationHelper {
       attributes.addDirectJars(directJars);
     }
 
-    attributes.merge(args);
+    boolean pruneTransitiveDeps = ruleContext.getFragment(JavaConfiguration.class)
+        .experimentalPruneTransitiveDeps();
+    attributes.merge(args, pruneTransitiveDeps);
   }
 
   private void addLibrariesToAttributesInternal(Iterable<? extends TransitiveInfoCollection> deps) {
