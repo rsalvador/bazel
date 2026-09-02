@@ -23,6 +23,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.graph.GraphBuilder;
+import com.google.common.graph.MutableGraph;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionConflictException;
@@ -42,12 +44,15 @@ import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.MiddlemanAction;
 import com.google.devtools.build.lib.actions.MiddlemanType;
 import com.google.devtools.build.lib.actions.RunfilesArtifactValue;
+import com.google.devtools.build.lib.actions.RunfilesMetadataValue;
 import com.google.devtools.build.lib.actions.RunfilesTree;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.actions.util.TestAction.DummyAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
+import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
+import com.google.devtools.build.lib.collect.nestedset.RunfilesMetadataKey;
 import com.google.devtools.build.lib.events.NullEventHandler;
 import com.google.devtools.build.lib.skyframe.ArtifactFunction.SourceArtifactException;
 import com.google.devtools.build.lib.vfs.FileStatus;
@@ -55,6 +60,7 @@ import com.google.devtools.build.lib.vfs.FileStatusWithDigestAdapter;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
+import com.google.devtools.build.lib.vfs.RootedPath;
 import com.google.devtools.build.lib.vfs.Symlinks;
 import com.google.devtools.build.lib.vfs.SyscallCache;
 import com.google.devtools.build.skyframe.Differencer.DiffWithDelta.Delta;
@@ -173,6 +179,94 @@ public class ArtifactFunctionTest extends ArtifactFunctionTestCase {
                 ImmutableList.of(createForTesting(input1), createForTesting(input2)),
                 ImmutableList.of(tree),
                 ImmutableList.of((TreeArtifactValue) evaluateArtifactValue(tree))));
+  }
+
+  @Test
+  public void sharedRunfilesMetadataUpdatesOnlyAffectedRoots() throws Exception {
+    Artifact common1 = createSourceArtifact("common1");
+    Artifact common2 = createSourceArtifact("common2");
+    Artifact leaf1 = createSourceArtifact("leaf1");
+    Artifact leaf2 = createSourceArtifact("leaf2");
+    for (Artifact input : ImmutableList.of(common1, common2, leaf1, leaf2)) {
+      file(input.getPath(), "original");
+    }
+    NestedSet<Artifact> shared = NestedSetBuilder.create(Order.STABLE_ORDER, common1, common2);
+    DerivedArtifact output1 = createMiddlemanArtifact("first");
+    DerivedArtifact output2 = createMiddlemanArtifact("second");
+    RunfilesTree runfilesTree = mock(RunfilesTree.class);
+    actions.add(new MiddlemanAction(
+        ActionsTestUtil.NULL_ACTION_OWNER, runfilesTree,
+        NestedSetBuilder.<Artifact>stableOrder().addTransitive(shared).add(leaf1).build(),
+        ImmutableSet.of(output1)));
+    actions.add(new MiddlemanAction(
+        ActionsTestUtil.NULL_ACTION_OWNER, runfilesTree,
+        NestedSetBuilder.<Artifact>stableOrder().addTransitive(shared).add(leaf2).build(),
+        ImmutableSet.of(output2)));
+    SkyValue original1 = evaluateArtifactValue(output1);
+    SkyValue original2 = evaluateArtifactValue(output2);
+    assertThat(evaluator.getExistingValue(RunfilesMetadataKey.create(shared))).isNotNull();
+    assertThat(evaluateArtifactValue(output1)).isSameInstanceAs(original1);
+
+    file(leaf1.getPath(), "changed leaf content");
+    differencer.invalidate(ImmutableList.of(
+        RootedPath.toRootedPath(leaf1.getRoot().getRoot(), leaf1.getRootRelativePath())));
+    RunfilesArtifactValue changed1 = (RunfilesArtifactValue) evaluateArtifactValue(output1);
+    assertThat(changed1).isNotEqualTo(original1);
+    assertThat(evaluateArtifactValue(output2)).isSameInstanceAs(original2);
+    Map<Artifact, FileArtifactValue> firstFiles = new HashMap<>();
+    changed1.forEachFile(firstFiles::put);
+    assertThat(firstFiles.get(leaf1)).isEqualTo(createForTesting(leaf1));
+
+    file(common1.getPath(), "changed shared content");
+    differencer.invalidate(ImmutableList.of(
+        RootedPath.toRootedPath(common1.getRoot().getRoot(), common1.getRootRelativePath())));
+    RunfilesArtifactValue sharedChanged1 = (RunfilesArtifactValue) evaluateArtifactValue(output1);
+    RunfilesArtifactValue sharedChanged2 = (RunfilesArtifactValue) evaluateArtifactValue(output2);
+    assertThat(sharedChanged1).isNotEqualTo(changed1);
+    assertThat(sharedChanged2).isNotEqualTo(original2);
+    for (RunfilesArtifactValue value : ImmutableList.of(sharedChanged1, sharedChanged2)) {
+      Map<Artifact, FileArtifactValue> files = new HashMap<>();
+      value.forEachFile(files::put);
+      assertThat(files.get(common1)).isEqualTo(createForTesting(common1));
+    }
+  }
+
+  @Test
+  public void runfilesRecoverySearchHandlesDeepSharingWithoutLostInputs() {
+    Artifact seed = createSourceArtifact("seed");
+    NestedSet<Artifact> shared = NestedSetBuilder.create(Order.STABLE_ORDER, seed);
+    for (int depth = 0; depth < 40; depth++) {
+      NestedSet<Artifact> left = NestedSetBuilder.<Artifact>stableOrder().addTransitive(shared)
+          .add(createSourceArtifact("left/" + depth)).build();
+      NestedSet<Artifact> right = NestedSetBuilder.<Artifact>stableOrder().addTransitive(shared)
+          .add(createSourceArtifact("right/" + depth)).build();
+      shared = NestedSetBuilder.<Artifact>stableOrder().addTransitive(left).addTransitive(right).build();
+    }
+    MutableGraph<SkyKey> rewind = GraphBuilder.directed().allowsSelfLoops(false).build();
+    assertThat(RunfilesMetadataKey.create(shared)
+        .addGeneratedPathsToRewindGraph(rewind, Artifact.key(seed))).isFalse();
+    assertThat(rewind.nodes()).isEmpty();
+  }
+
+  @Test
+  public void runfilesMetadataEqualityAndHashingDoNotExpandSharedGraphs() {
+    RunfilesMetadataValue left = metadataChunk(ImmutableList.of());
+    RunfilesMetadataValue right = metadataChunk(ImmutableList.of());
+    for (int depth = 0; depth < 40; depth++) {
+      left = metadataChunk(ImmutableList.of(left, left));
+      right = metadataChunk(ImmutableList.of(right, right));
+    }
+    assertThat(left).isNotEqualTo(right);
+    RunfilesMetadataValue parent1 = metadataChunk(ImmutableList.of(left));
+    RunfilesMetadataValue parent2 = metadataChunk(ImmutableList.of(left));
+    assertThat(parent1).isEqualTo(parent2);
+    assertThat(parent1.hashCode()).isEqualTo(parent2.hashCode());
+  }
+
+  private static RunfilesMetadataValue metadataChunk(
+      ImmutableList<RunfilesMetadataValue> children) {
+    return new RunfilesMetadataValue(
+        ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), children);
   }
 
   /**

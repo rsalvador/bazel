@@ -56,6 +56,7 @@ java_library(
     name = "artifact_nested_set_key",
     srcs = [
         "ArtifactNestedSetKey.java",
+        "RunfilesMetadataKey.java",
     ],
     deps = [
         ":nestedset",

@@ -33,6 +33,7 @@ public class ActionArtifactCycleReporter extends AbstractLabelCycleReporter {
       Predicates.or(
           SkyFunctions.isSkyFunction(Artifact.ARTIFACT),
           SkyFunctions.isSkyFunction(SkyFunctions.ARTIFACT_NESTED_SET),
+          SkyFunctions.isSkyFunction(SkyFunctions.RUNFILES_METADATA),
           SkyFunctions.isSkyFunction(SkyFunctions.ACTION_EXECUTION),
           SkyFunctions.isSkyFunction(SkyFunctions.TARGET_COMPLETION),
           SkyFunctions.isSkyFunction(SkyFunctions.ASPECT_COMPLETION),
@@ -81,7 +82,8 @@ public class ActionArtifactCycleReporter extends AbstractLabelCycleReporter {
     // BuildDriverKeys don't provide any relevant info for the end user.
     return SkyFunctions.BUILD_DRIVER.equals(key.functionName())
         // ArtifactNestedSetKeys are just an implementation detail.
-        || SkyFunctions.ARTIFACT_NESTED_SET.equals(key.functionName());
+        || SkyFunctions.ARTIFACT_NESTED_SET.equals(key.functionName())
+        || SkyFunctions.RUNFILES_METADATA.equals(key.functionName());
   }
 
   @Override
@@ -112,6 +114,7 @@ public class ActionArtifactCycleReporter extends AbstractLabelCycleReporter {
     // ArtifactNestedSetKey isn't worth reporting to the user - it is just an optimization, and will
     // always be an intermediate member of a cycle. It may contain artifacts irrelevant to the
     // cycle, and may be nested several layers deep.
-    return SkyFunctions.ARTIFACT_NESTED_SET.equals(key.functionName());
+    return SkyFunctions.ARTIFACT_NESTED_SET.equals(key.functionName())
+        || SkyFunctions.RUNFILES_METADATA.equals(key.functionName());
   }
 }

@@ -65,6 +65,7 @@ import com.google.devtools.build.lib.buildtool.util.BuildIntegrationTestCase.Rec
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.collect.nestedset.ArtifactNestedSetKey;
+import com.google.devtools.build.lib.collect.nestedset.RunfilesMetadataKey;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.exec.SpawnExecException;
 import com.google.devtools.build.lib.runtime.BlazeModule;
@@ -248,8 +249,8 @@ public class RewindingTestsHelper {
    * Injects a {@link NotifyingHelper.Listener} that collects keys rewound by rewinding into the
    * returned list, starting with the next build.
    *
-   * <p>To avoid brittle assertions on the number of keys rewound, {@link ArtifactNestedSetKey} is
-   * not collected, though it may be rewound. Its {@link
+   * <p>To avoid brittle assertions on the number of keys rewound, {@link ArtifactNestedSetKey} and
+   * {@link RunfilesMetadataKey} are not collected, though they may be rewound. Their {@link
    * com.google.devtools.build.lib.collect.nestedset.NestedSet} may contain multiple paths (of
    * varying length) to a lost artifact, any of which would be a correct chain for rewinding.
    */
@@ -262,8 +263,9 @@ public class RewindingTestsHelper {
                 (NotifyingHelper.MarkDirtyAfterContext) context;
             if (markDirtyAfterContext.dirtyType() == DirtyType.REWIND
                 && markDirtyAfterContext.actuallyDirtied()
-                // Ignore ArtifactNestedSetKey. See method javadoc.
-                && !(key instanceof ArtifactNestedSetKey)) {
+                // Ignore intermediate nested-set nodes. See method javadoc.
+                && !(key instanceof ArtifactNestedSetKey)
+                && !(key instanceof RunfilesMetadataKey)) {
               rewoundKeys.add(key);
             }
           }
@@ -273,7 +275,7 @@ public class RewindingTestsHelper {
 
   static void assertOnlyActionsRewound(List<SkyKey> rewoundKeys) {
     for (SkyKey key : rewoundKeys) {
-      if (!(key instanceof ArtifactNestedSetKey)) {
+      if (!(key instanceof ArtifactNestedSetKey) && !(key instanceof RunfilesMetadataKey)) {
         assertThat(key).isInstanceOf(ActionLookupData.class);
       }
     }

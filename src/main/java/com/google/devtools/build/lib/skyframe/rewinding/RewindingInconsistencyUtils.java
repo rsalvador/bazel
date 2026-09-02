@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.skyframe.rewinding;
 import com.google.devtools.build.lib.actions.ActionLookupData;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.collect.nestedset.ArtifactNestedSetKey;
+import com.google.devtools.build.lib.collect.nestedset.RunfilesMetadataKey;
 import com.google.devtools.build.lib.skyframe.ActionTemplateExpansionValue.ActionTemplateExpansionKey;
 import com.google.devtools.build.lib.skyframe.AspectCompletionValue.AspectCompletionKey;
 import com.google.devtools.build.lib.skyframe.FilesetEntryKey;
@@ -33,6 +34,7 @@ public final class RewindingInconsistencyUtils {
   static boolean mayForceRebuildChildren(SkyKey key) {
     return key instanceof ActionLookupData
         || key instanceof ArtifactNestedSetKey
+        || key instanceof RunfilesMetadataKey
         || key instanceof TopLevelActionLookupKeyWrapper;
   }
 
@@ -40,6 +42,7 @@ public final class RewindingInconsistencyUtils {
   public static boolean isRewindable(SkyKey key) {
     return key instanceof ActionLookupData
         || key instanceof ArtifactNestedSetKey
+        || key instanceof RunfilesMetadataKey
         || key instanceof Artifact
         || key instanceof FilesetEntryKey
         || key instanceof TraversalRequest;
@@ -54,6 +57,7 @@ public final class RewindingInconsistencyUtils {
   static boolean isTypeThatDependsOnRewindableNodes(SkyKey key) {
     return key instanceof ActionLookupData
         || key instanceof ArtifactNestedSetKey
+        || key instanceof RunfilesMetadataKey
         || key instanceof ActionTemplateExpansionKey
         || key instanceof Artifact
         || key instanceof TargetCompletionKey

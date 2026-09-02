@@ -18,9 +18,12 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableList;
+import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.skyframe.TreeArtifactValue;
 import com.google.devtools.build.lib.util.HashCodes;
 import com.google.devtools.build.skyframe.SkyValue;
+import java.util.HashMap;
+import java.util.Map;
 
 /** The artifacts behind a runfiles middleman. */
 public final class RunfilesArtifactValue implements SkyValue {
@@ -42,6 +45,10 @@ public final class RunfilesArtifactValue implements SkyValue {
   private final ImmutableList<Artifact> trees;
   private final ImmutableList<TreeArtifactValue> treeValues;
 
+  // Null for the compatibility constructor. Shared data is never flattened and retained here.
+  private final NestedSet<Artifact> sharedInputs;
+  private final RunfilesMetadataValue sharedMetadata;
+
   public RunfilesArtifactValue(
       FileArtifactValue metadata,
       RunfilesTree runfilesTree,
@@ -55,13 +62,62 @@ public final class RunfilesArtifactValue implements SkyValue {
     this.fileValues = checkNotNull(fileValues);
     this.trees = checkNotNull(trees);
     this.treeValues = checkNotNull(treeValues);
+    this.sharedInputs = null;
+    this.sharedMetadata = null;
     checkArgument(
         files.size() == fileValues.size() && trees.size() == treeValues.size(),
         "Size mismatch: %s",
         this);
   }
 
+  public RunfilesArtifactValue(
+      FileArtifactValue metadata,
+      RunfilesTree runfilesTree,
+      NestedSet<Artifact> inputs,
+      RunfilesMetadataValue sharedMetadata) {
+    this.metadata = checkNotNull(metadata);
+    this.runfilesTree = checkNotNull(runfilesTree);
+    this.sharedInputs = checkNotNull(inputs);
+    this.sharedMetadata = checkNotNull(sharedMetadata);
+    this.files = null;
+    this.fileValues = null;
+    this.trees = null;
+    this.treeValues = null;
+  }
+
+  private RunfilesArtifactValue asFlatValue() {
+    if (sharedMetadata == null) {
+      return this;
+    }
+    Map<Artifact, FileArtifactValue> fileMap = new HashMap<>();
+    Map<Artifact, TreeArtifactValue> treeMap = new HashMap<>();
+    sharedMetadata.collect(fileMap, treeMap);
+    ImmutableList.Builder<Artifact> flatFiles = ImmutableList.builder();
+    ImmutableList.Builder<FileArtifactValue> flatFileValues = ImmutableList.builder();
+    ImmutableList.Builder<Artifact> flatTrees = ImmutableList.builder();
+    ImmutableList.Builder<TreeArtifactValue> flatTreeValues = ImmutableList.builder();
+    // Use the original input order before sorting, exactly as ArtifactFunction did.
+    for (Artifact input : ImmutableList.sortedCopyOf(
+        Artifact.EXEC_PATH_COMPARATOR, sharedInputs.toList())) {
+      FileArtifactValue fileValue = fileMap.get(input);
+      if (fileValue != null) {
+        flatFiles.add(input);
+        flatFileValues.add(fileValue);
+      }
+      TreeArtifactValue treeValue = treeMap.get(input);
+      if (treeValue != null) {
+        flatTrees.add(input);
+        flatTreeValues.add(treeValue);
+      }
+    }
+    return new RunfilesArtifactValue(metadata, runfilesTree, flatFiles.build(), flatFileValues.build(),
+        flatTrees.build(), flatTreeValues.build());
+  }
+
   public RunfilesArtifactValue withOverriddenRunfilesTree(RunfilesTree overrideTree) {
+    if (sharedMetadata != null) {
+      return new RunfilesArtifactValue(metadata, overrideTree, sharedInputs, sharedMetadata);
+    }
     return new RunfilesArtifactValue(metadata, overrideTree, files, fileValues, trees, treeValues);
   }
 
@@ -78,6 +134,10 @@ public final class RunfilesArtifactValue implements SkyValue {
   /** Visits the file artifacts that this runfiles artifact expands to, together with their data. */
   public void forEachFile(RunfilesConsumer<FileArtifactValue> consumer)
       throws InterruptedException {
+    if (sharedMetadata != null) {
+      asFlatValue().forEachFile(consumer);
+      return;
+    }
     for (int i = 0; i < files.size(); i++) {
       consumer.accept(files.get(i), fileValues.get(i));
     }
@@ -86,6 +146,12 @@ public final class RunfilesArtifactValue implements SkyValue {
   /** Visits the tree artifacts that this runfiles artifact expands to, together with their data. */
   public void forEachTree(RunfilesConsumer<TreeArtifactValue> consumer)
       throws InterruptedException {
+    if (sharedMetadata != null) {
+      if (sharedMetadata.hasTrees()) {
+        asFlatValue().forEachTree(consumer);
+      }
+      return;
+    }
     for (int i = 0; i < trees.size(); i++) {
       consumer.accept(trees.get(i), treeValues.get(i));
     }
@@ -115,6 +181,9 @@ public final class RunfilesArtifactValue implements SkyValue {
     if (!(o instanceof RunfilesArtifactValue that)) {
       return false;
     }
+    if (sharedMetadata != null || that.sharedMetadata != null) {
+      return asFlatValue().equals(that.asFlatValue());
+    }
     return metadata.equals(that.metadata)
         && files.equals(that.files)
         && fileValues.equals(that.fileValues)
@@ -124,6 +193,9 @@ public final class RunfilesArtifactValue implements SkyValue {
 
   @Override
   public int hashCode() {
+    if (sharedMetadata != null) {
+      return asFlatValue().hashCode();
+    }
     return HashCodes.hashObjects(metadata, files, fileValues, trees, treeValues);
   }
 

@@ -111,6 +111,9 @@ public final class SkyFunctions {
       SkyFunctionName.createSemiHermetic("ACTION_EXECUTION");
   public static final SkyFunctionName ARTIFACT_NESTED_SET =
       SkyFunctionName.createHermetic("ARTIFACT_NESTED_SET");
+
+  public static final SkyFunctionName RUNFILES_METADATA =
+      SkyFunctionName.createHermetic("RUNFILES_METADATA");
   public static final SkyFunctionName RECURSIVE_FILESYSTEM_TRAVERSAL =
       SkyFunctionName.createHermetic("RECURSIVE_FILESYSTEM_TRAVERSAL");
   public static final SkyFunctionName FILESET_ENTRY =

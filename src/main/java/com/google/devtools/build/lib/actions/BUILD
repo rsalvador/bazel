@@ -427,11 +427,15 @@ java_library(
 
 java_library(
     name = "runfiles_metadata",
-    srcs = ["RunfilesArtifactValue.java"],
+    srcs = [
+        "RunfilesArtifactValue.java",
+        "RunfilesMetadataValue.java",
+    ],
     deps = [
         ":artifacts",
         ":file_metadata",
         ":runfiles_tree",
+        "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
         "//src/main/java/com/google/devtools/build/lib/skyframe:tree_artifact_value",
         "//src/main/java/com/google/devtools/build/lib/util:hash_codes",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
