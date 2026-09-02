@@ -99,7 +99,9 @@ public final class CompletionContext implements ArtifactExpander {
     ArtifactPathResolver pathResolver =
         pathResolverFactory.shouldCreatePathResolverForArtifactValues()
             ? pathResolverFactory.createPathResolverForArtifactValues(
-                inputMap,
+                // Backport the important-metadata choice from Bazel 9 (0cd7a538d3c9).
+                // Keep the legacy 8.x behavior for filesets, whose metadata model differs.
+                filesets.isEmpty() ? importantInputMap : inputMap,
                 Maps.transformValues(treeArtifacts, TreeArtifactValue::getChildren),
                 filesets,
                 workspaceName)

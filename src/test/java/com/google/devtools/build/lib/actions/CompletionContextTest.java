@@ -15,9 +15,14 @@ package com.google.devtools.build.lib.actions;
 
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -26,6 +31,7 @@ import com.google.devtools.build.lib.actions.Artifact.SpecialArtifactType;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactRoot.RootType;
 import com.google.devtools.build.lib.actions.CompletionContext.ArtifactReceiver;
+import com.google.devtools.build.lib.actions.CompletionContext.PathResolverFactory;
 import com.google.devtools.build.lib.actions.FileArtifactValue.RemoteFileArtifactValue;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.bugreport.BugReporter;
@@ -71,6 +77,40 @@ public final class CompletionContextTest {
     assertThat(visit(ctx, file)).containsExactly(file);
     assertThrows(IllegalArgumentException.class, () -> ctx.expandTreeArtifact(file));
     assertThrows(IllegalArgumentException.class, () -> ctx.expandFileset(file));
+  }
+
+  @Test
+  public void pathResolverRetainsOnlyImportantMetadataWithoutFilesets() {
+    assertPathResolverInputMap(/* withFileset= */ false);
+  }
+
+  @Test
+  public void pathResolverPreservesFullMetadataForLegacyFilesets() {
+    assertPathResolverInputMap(/* withFileset= */ true);
+  }
+
+  private void assertPathResolverInputMap(boolean withFileset) {
+    ActionInputMap importantInputs = new ActionInputMap(BugReporter.defaultInstance(), 0);
+    if (withFileset) {
+      filesetExpansions.put(
+          createFileset("fs"),
+          FilesetOutputTree.create(ImmutableList.of(filesetLink("a", "b"))));
+    }
+    PathResolverFactory factory = mock(PathResolverFactory.class);
+    when(factory.shouldCreatePathResolverForArtifactValues()).thenReturn(true);
+    when(factory.createPathResolverForArtifactValues(any(), any(), any(), any()))
+        .thenReturn(ArtifactPathResolver.IDENTITY);
+
+    CompletionContext context = CompletionContext.create(
+        treeExpansions, filesetExpansions, /* baselineCoverageValue= */ null,
+        /* expandFilesets= */ true, /* fullyResolveFilesetSymlinks= */ false,
+        inputMap, importantInputs, factory, execRoot, "workspace");
+
+    verify(factory).createPathResolverForArtifactValues(
+        same(withFileset ? inputMap : importantInputs), any(), same(filesetExpansions),
+        eq("workspace"));
+    assertThat(context.getImportantInputMap()).isSameInstanceAs(importantInputs);
+    assertThat(context.pathResolver()).isSameInstanceAs(ArtifactPathResolver.IDENTITY);
   }
 
   @Test
