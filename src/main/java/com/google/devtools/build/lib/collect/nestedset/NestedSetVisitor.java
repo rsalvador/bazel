@@ -57,6 +57,13 @@ public final class NestedSetVisitor<E> {
     }
   }
 
+  /** Visits without flattening, with the same interruption policy as {@link NestedSet#toList}. */
+  public void visitUninterruptibly(NestedSet<E> nestedSet) {
+    if (!nestedSet.isEmpty()) {
+      visitRaw(nestedSet.getChildren());
+    }
+  }
+
   /** Visit every entry in a collection. */
   public void visit(Collection<E> collection) {
     for (E e : collection) {

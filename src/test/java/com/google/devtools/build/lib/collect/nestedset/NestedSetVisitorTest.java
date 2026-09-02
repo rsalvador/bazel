@@ -27,6 +27,38 @@ import org.junit.runners.JUnit4;
 public final class NestedSetVisitorTest {
 
   @Test
+  public void uninterruptibleVisitReusesSharedBranchesAcrossRoots() {
+    NestedSet<Integer> shared = NestedSetBuilder.create(Order.STABLE_ORDER, 1, 2);
+    NestedSet<Integer> first =
+        NestedSetBuilder.<Integer>stableOrder().addTransitive(shared).add(3).build();
+    NestedSet<Integer> second =
+        NestedSetBuilder.<Integer>stableOrder().addTransitive(shared).add(4).build();
+    List<Integer> visited = new ArrayList<>();
+    HashSet<Object> branches = new HashSet<>();
+    NestedSetVisitor<Integer> visitor = new NestedSetVisitor<>(
+        visited::add, node -> !(node instanceof Object[]) || branches.add(node));
+
+    visitor.visitUninterruptibly(first);
+    visitor.visitUninterruptibly(second);
+
+    assertThat(visited).containsExactly(1, 2, 3, 4).inOrder();
+  }
+
+  @Test
+  public void uninterruptibleVisitPreservesInterruptStatus() {
+    List<Integer> visited = new ArrayList<>();
+    Thread.currentThread().interrupt();
+    try {
+      new NestedSetVisitor<Integer>(visited::add, new HashSet<>()::add)
+          .visitUninterruptibly(NestedSetBuilder.create(Order.STABLE_ORDER, 1, 2));
+      assertThat(visited).containsExactly(1, 2).inOrder();
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
   public void stableOrder() throws InterruptedException {
     NestedSet<Integer> set =
         NestedSetBuilder.<Integer>stableOrder()
