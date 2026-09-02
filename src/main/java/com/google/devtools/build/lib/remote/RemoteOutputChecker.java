@@ -20,6 +20,7 @@ import static com.google.devtools.build.lib.skyframe.CoverageReportValue.COVERAG
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.MapMaker;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
@@ -32,15 +33,18 @@ import com.google.devtools.build.lib.analysis.ExtraActionArtifactsProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.ProviderCollection;
+import com.google.devtools.build.lib.analysis.SymlinkEntry;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactHelper;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.test.TestProvider;
 import com.google.devtools.build.lib.clock.Clock;
+import com.google.devtools.build.lib.collect.nestedset.NestedSetVisitor;
 import com.google.devtools.build.lib.remote.options.RemoteOutputsMode;
 import com.google.devtools.build.lib.skyframe.SkyFunctions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.skyframe.MemoizingEvaluator;
+import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -68,6 +72,17 @@ public class RemoteOutputChecker implements RemoteArtifactChecker {
   private final ImmutableList<Predicate<String>> patternsToDownload;
   private final ConcurrentArtifactPathTrie pathsToDownload = new ConcurrentArtifactPathTrie();
   private final Set<PathFragment> pathsToSkip = ConcurrentHashMap.newKeySet();
+
+  // Per checker, not a global cache. Weak identity keys avoid retaining old analysis graphs
+  // through lastRemoteOutputChecker. Only shared branch arrays are recorded, not every leaf.
+  private final Set<Object> visitedRunfilesNodes =
+      Collections.newSetFromMap(new MapMaker().weakKeys().<Object, Boolean>makeMap());
+  private final NestedSetVisitor.VisitedState runfilesVisitedState =
+      node -> !(node instanceof Object[]) || visitedRunfilesNodes.add(node);
+  private final NestedSetVisitor<Artifact> runfilesVisitor =
+      new NestedSetVisitor<>(this::addRunfileToDownload, runfilesVisitedState);
+  private final NestedSetVisitor<SymlinkEntry> runfilesSymlinkVisitor =
+      new NestedSetVisitor<>(link -> addRunfileToDownload(link.getArtifact()), runfilesVisitedState);
 
   public RemoteOutputChecker(
       Clock clock,
@@ -189,22 +204,19 @@ public class RemoteOutputChecker implements RemoteArtifactChecker {
       return;
     }
     var runfiles = runfilesSupport.getRunfiles();
-    for (Artifact runfile : runfiles.getArtifacts().toList()) {
-      if (mayBeRemote(runfile)) {
-        addOutputToDownload(runfile);
-      }
+    // Concurrent analysis callbacks must not return before another callback has finished
+    // registering a shared subtree. The output selection is a set, so traversal order
+    // and repeated leaves do not affect its meaning.
+    synchronized (runfilesVisitor) {
+      runfilesVisitor.visitUninterruptibly(runfiles.getArtifacts());
+      runfilesSymlinkVisitor.visitUninterruptibly(runfiles.getSymlinks());
+      runfilesSymlinkVisitor.visitUninterruptibly(runfiles.getRootSymlinks());
     }
-    for (var symlink : runfiles.getSymlinks().toList()) {
-      var artifact = symlink.getArtifact();
-      if (mayBeRemote(artifact)) {
-        addOutputToDownload(artifact);
-      }
-    }
-    for (var symlink : runfiles.getRootSymlinks().toList()) {
-      var artifact = symlink.getArtifact();
-      if (mayBeRemote(artifact)) {
-        addOutputToDownload(artifact);
-      }
+  }
+
+  private void addRunfileToDownload(Artifact artifact) {
+    if (mayBeRemote(artifact)) {
+      addOutputToDownload(artifact);
     }
   }
 
