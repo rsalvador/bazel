@@ -37,8 +37,10 @@ import com.google.devtools.build.lib.actions.FilesetTraversalParams.DirectTraver
 import com.google.devtools.build.lib.actions.FilesetTraversalParams.PackageBoundaryMode;
 import com.google.devtools.build.lib.actions.MiddlemanAction;
 import com.google.devtools.build.lib.actions.RunfilesArtifactValue;
+import com.google.devtools.build.lib.actions.RunfilesMetadataValue;
 import com.google.devtools.build.lib.bugreport.BugReport;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.collect.nestedset.RunfilesMetadataKey;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.server.FailureDetails.Execution;
 import com.google.devtools.build.lib.server.FailureDetails.Execution.Code;
@@ -395,52 +397,12 @@ public final class ArtifactFunction implements SkyFunction {
       FileArtifactValue value,
       SkyFunction.Environment env)
       throws InterruptedException {
-    ImmutableList<Artifact> inputs = action.getInputs().toList();
-    SkyframeLookupResult values = env.getValuesAndExceptions(Artifact.keys(inputs));
-    if (env.valuesMissing()) {
+    RunfilesMetadataValue shared =
+        (RunfilesMetadataValue) env.getValue(RunfilesMetadataKey.create(action.getInputs()));
+    if (shared == null) {
       return null;
     }
-
-    ImmutableList.Builder<Artifact> files = ImmutableList.builder();
-    ImmutableList.Builder<FileArtifactValue> fileValues = ImmutableList.builder();
-    ImmutableList.Builder<Artifact> trees = ImmutableList.builder();
-    ImmutableList.Builder<TreeArtifactValue> treeValues = ImmutableList.builder();
-
-    // Sort for better equality in RunfilesArtifactValue.
-    ImmutableList<Artifact> sortedInputs =
-        ImmutableList.sortedCopyOf(Artifact.EXEC_PATH_COMPARATOR, inputs);
-    for (Artifact input : sortedInputs) {
-      SkyValue inputValue = values.get(Artifact.key(input));
-      if (inputValue == null) {
-        return null;
-      }
-      if (inputValue instanceof FileArtifactValue) {
-        files.add(input);
-        fileValues.add((FileArtifactValue) inputValue);
-      } else if (inputValue instanceof ActionExecutionValue) {
-        files.add(input);
-        fileValues.add(((ActionExecutionValue) inputValue).getExistingFileArtifactValue(input));
-      } else if (inputValue instanceof TreeArtifactValue) {
-        trees.add(input);
-        treeValues.add((TreeArtifactValue) inputValue);
-      } else {
-        // We do not recurse in middleman artifacts.
-        Preconditions.checkState(
-            !(inputValue instanceof RunfilesArtifactValue),
-            "%s %s %s",
-            artifact,
-            action,
-            inputValue);
-      }
-    }
-
-    return new RunfilesArtifactValue(
-        value,
-        action.getRunfilesTree(),
-        files.build(),
-        fileValues.build(),
-        trees.build(),
-        treeValues.build());
+    return new RunfilesArtifactValue(value, action.getRunfilesTree(), action.getInputs(), shared);
   }
 
   @Override

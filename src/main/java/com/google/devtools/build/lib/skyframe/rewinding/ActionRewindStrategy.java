@@ -44,6 +44,7 @@ import com.google.devtools.build.lib.actions.LostInputsActionExecutionException;
 import com.google.devtools.build.lib.bugreport.BugReporter;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.collect.nestedset.ArtifactNestedSetKey;
+import com.google.devtools.build.lib.collect.nestedset.RunfilesMetadataKey;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
@@ -251,6 +252,19 @@ public final class ActionRewindStrategy {
     // short-circuits when a node is already in the rewind graph.
     ArtifactNestedSetKey.addNestedSetPathsToRewindGraph(
         rewindGraph, failedKey, failedKeyDeps, lostArtifacts);
+
+    // A runfiles middleman now retains metadata through shared intermediate nodes. Rewind
+    // those nodes too, so regenerated inputs cannot leave an old snapshot reachable. Do this
+    // only after checkActions has discovered producers, because its graph membership tests
+    // also decide which producer actions still need inspection.
+    for (SkyKey node : ImmutableList.copyOf(rewindGraph.nodes())) {
+      if (node instanceof DerivedArtifact artifact && artifact.isMiddlemanArtifact()) {
+        Action action = checkNotNull(
+            ActionUtils.getActionForLookupData(env, artifact.getGeneratingActionKey()));
+        RunfilesMetadataKey.create(action.getInputs())
+            .addGeneratedPathsToRewindGraph(rewindGraph, artifact);
+      }
+    }
 
     return Reset.of(rewindGraph);
   }

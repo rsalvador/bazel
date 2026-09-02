@@ -258,6 +258,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
                         MetadataConsumerForMetrics.NO_OP,
                         SyscallCache.NO_CACHE,
                         () -> DisabledDependenciesProvider.INSTANCE))
+                .put(SkyFunctions.RUNFILES_METADATA, new RunfilesMetadataFunction())
                 .put(
                     SkyFunctions.ACTION_EXECUTION,
                     new ActionExecutionFunction(

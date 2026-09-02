@@ -830,6 +830,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     map.put(
         SkyFunctions.ARTIFACT_NESTED_SET,
         new ArtifactNestedSetFunction(this::getConsumedArtifactsTracker));
+    map.put(SkyFunctions.RUNFILES_METADATA, new RunfilesMetadataFunction());
     BuildDriverFunction buildDriverFunction = newBuildDriverFunction();
     map.put(SkyFunctions.BUILD_DRIVER, buildDriverFunction);
     FlagSetFunction flagSetFunction = new FlagSetFunction();

@@ -693,7 +693,10 @@ java_library(
 
 java_library(
     name = "artifact_function",
-    srcs = ["ArtifactFunction.java"],
+    srcs = [
+        "ArtifactFunction.java",
+        "RunfilesMetadataFunction.java",
+    ],
     deps = [
         ":action_execution_value",
         ":action_template_expansion_value",
@@ -713,6 +716,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions:runfiles_metadata",
         "//src/main/java/com/google/devtools/build/lib/bugreport",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/collect/nestedset:artifact_nested_set_key",
         "//src/main/java/com/google/devtools/build/lib/events",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/analysis:dependencies_provider",

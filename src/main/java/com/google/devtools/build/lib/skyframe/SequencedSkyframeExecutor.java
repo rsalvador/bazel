@@ -47,6 +47,7 @@ import com.google.devtools.build.lib.bugreport.BugReporter;
 import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.collect.nestedset.ArtifactNestedSetKey;
+import com.google.devtools.build.lib.collect.nestedset.RunfilesMetadataKey;
 import com.google.devtools.build.lib.concurrent.NamedForkJoinPool;
 import com.google.devtools.build.lib.concurrent.PooledInterner;
 import com.google.devtools.build.lib.concurrent.QuiescingExecutors;
@@ -668,7 +669,9 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
     // TODO: b/330770905 - Rewrite this to use pattern matching when available.
     // Also remove ActionLookupData since all such nodes depend on ActionLookupKey nodes and
     // deleting en masse is cheaper than deleting via graph traversal (b/192863968).
-    if (k instanceof ArtifactNestedSetKey || k instanceof ActionLookupData) {
+    if (k instanceof ArtifactNestedSetKey
+        || k instanceof RunfilesMetadataKey
+        || k instanceof ActionLookupData) {
       return true;
     }
     // Remove BuildConfigurationKeys except for the currently active key and the key for
